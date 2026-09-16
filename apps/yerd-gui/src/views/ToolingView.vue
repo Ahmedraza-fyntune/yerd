@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref } from "vue";
-import { Download, RefreshCw, Trash2 } from "lucide-vue-next";
+import { Download, Link2, RefreshCw, Trash2 } from "lucide-vue-next";
 
 import PageHeader from "@/components/PageHeader.vue";
 import Badge from "@/components/ui/Badge.vue";
@@ -10,6 +10,7 @@ import CardContent from "@/components/ui/CardContent.vue";
 import CardDescription from "@/components/ui/CardDescription.vue";
 import CardHeader from "@/components/ui/CardHeader.vue";
 import CardTitle from "@/components/ui/CardTitle.vue";
+import Input from "@/components/ui/Input.vue";
 import Modal from "@/components/ui/Modal.vue";
 import Spinner from "@/components/ui/Spinner.vue";
 import { registerViewActions } from "@/lib/shortcuts/useViewActions";
@@ -20,6 +21,7 @@ import {
   IpcError,
   listTools,
   pollJobToEnd,
+  setToolPath,
   uninstallTool,
 } from "@/ipc/client";
 import type { ToolStatus } from "@/ipc/types";
@@ -37,6 +39,7 @@ const TOOL_HINTS: Record<string, string> = {
   composer: "PHP dependency manager.",
   node: "Node.js runtime for building frontend assets (npm, npx).",
   bun: "Fast all-in-one JavaScript runtime and package manager.",
+  go: "Go programming language compiler and tools (go, gofmt).",
   laravel: "The laravel new installer for scaffolding new Laravel apps. Needs Composer.",
   "wp-cli": "The wp command for managing WordPress installs from the terminal. Needs Composer.",
 };
@@ -127,6 +130,49 @@ function openUninstall(t: ToolStatus): void {
   uninstallOpen.value = true;
 }
 
+const pathModalOpen = ref(false);
+const pathTarget = ref<ToolStatus | null>(null);
+const customPathInput = ref("");
+
+function openPathModal(t: ToolStatus): void {
+  pathTarget.value = t;
+  customPathInput.value = t.external_path ?? "";
+  pathModalOpen.value = true;
+}
+
+async function savePathModal(close: () => void): Promise<void> {
+  const t = pathTarget.value;
+  if (!t) return;
+  const pathVal = customPathInput.value.trim();
+  busy.value = `path:${t.id}`;
+  close();
+  try {
+    await setToolPath(t.id, pathVal ? pathVal : null);
+    toast.success(pathVal ? `Linked ${t.display_name} to ${pathVal}` : `Reset ${t.display_name} path`);
+    await Promise.all([load(), refresh()]);
+  } catch (e) {
+    toast.error(`Failed to set path for ${t.display_name}`, (e as IpcError).message);
+  } finally {
+    busy.value = null;
+  }
+}
+
+async function resetPathModal(close: () => void): Promise<void> {
+  const t = pathTarget.value;
+  if (!t) return;
+  busy.value = `path:${t.id}`;
+  close();
+  try {
+    await setToolPath(t.id, null);
+    toast.success(`Reset ${t.display_name} path`);
+    await Promise.all([load(), refresh()]);
+  } catch (e) {
+    toast.error(`Failed to reset path for ${t.display_name}`, (e as IpcError).message);
+  } finally {
+    busy.value = null;
+  }
+}
+
 async function confirmUninstall(close: () => void): Promise<void> {
   const t = uninstallTarget.value;
   if (!t) return;
@@ -201,14 +247,18 @@ onUnmounted(registerViewActions({ refresh: () => void load() }));
                   <Badge v-if="t.installed" variant="secondary">
                     {{ t.version ?? "installed" }}
                   </Badge>
-                  <Badge
-                    v-else-if="t.external"
-                    variant="outline"
-                    class="cursor-help"
-                    :title="externalHint(t)"
-                  >
-                    External
-                  </Badge>
+                  <div v-else-if="t.external" class="flex flex-col gap-1 items-start">
+                    <Badge
+                      variant="outline"
+                      class="cursor-help"
+                      :title="externalHint(t)"
+                    >
+                      External
+                    </Badge>
+                    <span v-if="t.version" class="text-xs text-muted-foreground font-mono">
+                      {{ t.version }}
+                    </span>
+                  </div>
                   <span v-else class="text-xs text-muted-foreground">
                     Not installed
                   </span>
@@ -243,11 +293,21 @@ onUnmounted(registerViewActions({ refresh: () => void load() }));
                     <template v-else>
                       <span
                         v-if="t.external"
-                        class="cursor-help text-xs text-muted-foreground"
+                        class="cursor-help text-xs text-muted-foreground mr-1"
                         :title="externalHint(t)"
                       >
                         Managed by you
                       </span>
+                      <Button
+                        v-if="t.id === 'go' || t.id === 'node' || t.id === 'composer'"
+                        variant="outline"
+                        size="sm"
+                        :disabled="busy !== null"
+                        title="Link an existing binary path on your system"
+                        @click="openPathModal(t)"
+                      >
+                        <Link2 class="mr-1.5 size-3.5" /> {{ t.external_path ? "Change Path" : "Link Path" }}
+                      </Button>
                       <Button
                         size="sm"
                         :disabled="busy !== null || blockedNoComposer(t)"
@@ -294,6 +354,41 @@ onUnmounted(registerViewActions({ refresh: () => void load() }));
         <Button variant="ghost" @click="close">Cancel</Button>
         <Button variant="destructive" @click="confirmUninstall(close)">
           Uninstall
+        </Button>
+      </template>
+    </Modal>
+
+    <Modal
+      v-model:open="pathModalOpen"
+      :title="`Configure Path for ${pathTarget?.display_name ?? 'tool'}`"
+    >
+      <div class="space-y-3">
+        <p class="text-sm text-muted-foreground">
+          Provide the absolute path to your existing {{ pathTarget?.display_name }} executable on your system (or leave blank and click Reset to restore default detection).
+        </p>
+        <div>
+          <label class="block text-xs font-medium text-foreground mb-1">
+            Executable Path
+          </label>
+          <Input
+            v-model="customPathInput"
+            placeholder="/usr/local/bin/go or /opt/homebrew/bin/go"
+            class="font-mono text-xs"
+          />
+        </div>
+      </div>
+      <template #footer="{ close }">
+        <Button
+          v-if="pathTarget?.external_path"
+          variant="outline"
+          class="mr-auto text-destructive"
+          @click="resetPathModal(close)"
+        >
+          Reset Path
+        </Button>
+        <Button variant="ghost" @click="close">Cancel</Button>
+        <Button @click="savePathModal(close)">
+          Save Path
         </Button>
       </template>
     </Modal>

@@ -166,6 +166,7 @@ fn main() {
             commands::list_tools,
             commands::install_tool,
             commands::uninstall_tool,
+            commands::set_tool_path,
             commands::install_tool_streamed,
             commands::install_cloudflared_streamed,
             commands::start_quick_tunnel,

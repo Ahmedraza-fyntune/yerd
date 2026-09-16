@@ -535,6 +535,10 @@ export async function uninstallTool(tool: string): Promise<void> {
   ensureOk(await call<Response>("uninstall_tool", { tool }));
 }
 
+export async function setToolPath(tool: string, path: string | null): Promise<void> {
+  ensureOk(await call<Response>("set_tool_path", { tool, path }));
+}
+
 /** Install a dev tool as a streamed job; returns the job id to poll. */
 export async function installToolStreamed(tool: string): Promise<string> {
   const r = ensureOk(await call<Response>("install_tool_streamed", { tool }));

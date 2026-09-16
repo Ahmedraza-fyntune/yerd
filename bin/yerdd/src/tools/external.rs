@@ -99,9 +99,72 @@ pub fn external_tool(
     find_in_path(dirs, tool.primary_bin(), data_bin, data_root)
 }
 
+/// Probe the installed version of an external tool binary by running it with
+/// a version flag (e.g. `go version` -> `"go1.24.0"`).
+pub async fn probe_external_version(tool: Tool, bin_path: &Path) -> Option<String> {
+    let flag = match tool {
+        Tool::Go => "version",
+        Tool::Node | Tool::Bun => "-v",
+        Tool::Composer | Tool::Laravel | Tool::WpCli => "--version",
+    };
+    let mut cmd = tokio::process::Command::new(bin_path);
+    cmd.arg(flag)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true);
+
+    let child = cmd.spawn().ok()?;
+    let out = tokio::time::timeout(std::time::Duration::from_secs(3), child.wait_with_output())
+        .await
+        .ok()?
+        .ok()?;
+
+    if !out.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    parse_version_output(tool, &stdout)
+}
+
+/// Parse the stdout from `<tool> <flag>` into a clean version string.
+pub fn parse_version_output(tool: Tool, stdout: &str) -> Option<String> {
+    let line = stdout.lines().next()?.trim();
+    if line.is_empty() {
+        return None;
+    }
+    match tool {
+        Tool::Go => {
+            // "go version go1.24.0 linux/amd64" -> "go1.24.0"
+            for part in line.split_whitespace() {
+                if part.starts_with("go") && part.chars().nth(2).is_some_and(|c| c.is_ascii_digit()) {
+                    return Some(part.to_owned());
+                }
+            }
+            Some(line.to_owned())
+        }
+        Tool::Node | Tool::Bun => {
+            // "v24.17.0" or "1.3.14" -> first token
+            line.split_whitespace().next().map(ToString::to_string)
+        }
+        Tool::Composer | Tool::Laravel | Tool::WpCli => {
+            // "Composer version 2.8.5 ..." -> find version token
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            for (idx, &p) in parts.iter().enumerate() {
+                if (p.eq_ignore_ascii_case("version") || p.eq_ignore_ascii_case("cli"))
+                    && idx + 1 < parts.len()
+                {
+                    return Some(parts[idx + 1].trim_start_matches('v').to_owned());
+                }
+            }
+            parts.get(1).or_else(|| parts.first()).map(|s| (*s).to_owned())
+        }
+    }
+}
+
 /// Whether `p` is a regular file with any execute bit set.
 #[cfg(unix)]
-fn is_executable(p: &Path) -> bool {
+pub fn is_executable(p: &Path) -> bool {
     use std::os::unix::fs::PermissionsExt as _;
     p.metadata()
         .is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
@@ -319,4 +382,21 @@ mod tests {
             None => std::env::remove_var("SHELL"),
         }
     }
+
+    #[test]
+    fn parse_version_output_handles_go_and_others() {
+        assert_eq!(
+            parse_version_output(Tool::Go, "go version go1.24.0 linux/amd64"),
+            Some("go1.24.0".to_owned())
+        );
+        assert_eq!(
+            parse_version_output(Tool::Node, "v24.17.0\n"),
+            Some("v24.17.0".to_owned())
+        );
+        assert_eq!(
+            parse_version_output(Tool::Composer, "Composer version 2.8.5 2025-01-23 12:00:00\n"),
+            Some("2.8.5".to_owned())
+        );
+    }
 }
+

@@ -2562,6 +2562,28 @@ fn request_uninstall_tool_byte_shape() {
 }
 
 #[test]
+fn request_set_tool_path_byte_shape() {
+    let r = Request::SetToolPath {
+        tool: "go".into(),
+        path: Some("/usr/local/go/bin/go".into()),
+    };
+    let s = serde_json::to_string(&r).unwrap();
+    assert_eq!(
+        s,
+        r#"{"type":"set_tool_path","tool":"go","path":"/usr/local/go/bin/go"}"#
+    );
+    assert_eq!(serde_json::from_str::<Request>(&s).unwrap(), r);
+
+    let r_none = Request::SetToolPath {
+        tool: "go".into(),
+        path: None,
+    };
+    let s_none = serde_json::to_string(&r_none).unwrap();
+    assert_eq!(s_none, r#"{"type":"set_tool_path","tool":"go","path":null}"#);
+    assert_eq!(serde_json::from_str::<Request>(&s_none).unwrap(), r_none);
+}
+
+#[test]
 fn response_tools_byte_shape() {
     let r = Response::Tools {
         tools: vec![ToolStatus {

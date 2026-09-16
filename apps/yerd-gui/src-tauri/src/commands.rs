@@ -922,6 +922,11 @@ pub async fn install_tool_streamed(tool: String) -> Result<Response, GuiError> {
     finish(exchange(&Request::InstallToolStreamed { tool }).await?)
 }
 
+#[tauri::command]
+pub async fn set_tool_path(tool: String, path: Option<String>) -> Result<Response, GuiError> {
+    finish(exchange(&Request::SetToolPath { tool, path }).await?)
+}
+
 // ── tunnels (Cloudflare Tunnel integration) ──────────────────────────────────
 
 /// Install the `cloudflared` binary as a streamed job (returns a job id).

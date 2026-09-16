@@ -135,8 +135,26 @@ pub enum Command {
     },
     /// List local managed services and their status.
     Services,
-    /// List installable dev tools (Composer, Node, Bun) and their install status.
+    /// List installable dev tools (Composer, Node, Bun, Go) and their install status.
     Tools,
+    /// Manage a dev tool (e.g. configure custom external path).
+    Tool {
+        /// What to do.
+        #[command(subcommand)]
+        action: ToolAction,
+    },
+    /// Run the Go compiler and tools (`go`).
+    #[command(disable_help_flag = true)]
+    Go {
+        /// Arguments forwarded verbatim to `go`.
+        #[arg(
+            trailing_var_arg = true,
+            allow_hyphen_values = true,
+            num_args = 0..,
+            value_name = "ARGS"
+        )]
+        args: Vec<std::ffi::OsString>,
+    },
     /// Manage a local service (redis, mysql, mariadb, postgres, meilisearch).
     Service {
         /// What to do.
@@ -885,9 +903,9 @@ pub enum UninstallTarget {
         /// PHP version, e.g. `8.5`.
         version: String,
     },
-    /// Uninstall a dev tool (`composer`, `node`, `bun`, `laravel`, `wp-cli`).
+    /// Uninstall a dev tool (`composer`, `node`, `bun`, `go`, `laravel`, `wp-cli`).
     Tool {
-        /// Tool id: `composer`, `node`, `bun`, `laravel`, or `wp-cli`.
+        /// Tool id: `composer`, `node`, `bun`, `go`, `laravel`, or `wp-cli`.
         id: String,
     },
 }
@@ -905,11 +923,26 @@ pub enum InstallTarget {
         #[arg(long)]
         legacy: bool,
     },
-    /// Install a dev tool (`composer`, `node`, `bun`, `laravel`, `wp-cli`) at
+    /// Install a dev tool (`composer`, `node`, `bun`, `go`, `laravel`, `wp-cli`) at
     /// its latest release.
     Tool {
-        /// Tool id: `composer`, `node`, `bun`, `laravel`, or `wp-cli`.
+        /// Tool id: `composer`, `node`, `bun`, `go`, `laravel`, or `wp-cli`.
         id: String,
+    },
+}
+
+/// Action of `yerd tool`.
+#[derive(clap::Subcommand, Debug, Clone)]
+pub enum ToolAction {
+    /// Configure a custom path for a tool binary (e.g. an existing Go binary).
+    Path {
+        /// Tool id (e.g. `go`).
+        id: String,
+        /// Absolute binary path, or omit with `--reset` to clear.
+        path: Option<PathBuf>,
+        /// Clear the custom path.
+        #[arg(long, conflicts_with = "path")]
+        reset: bool,
     },
 }
 

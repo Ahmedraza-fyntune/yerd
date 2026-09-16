@@ -63,6 +63,9 @@ pub async fn run(cli: Cli) -> ExitCode {
                 return ExitCode::from(2);
             }
         }
+        Command::Go { args } => {
+            return run_go(args);
+        }
         #[cfg_attr(not(unix), allow(unused_variables))]
         Command::Exec { site, tool, args } => {
             #[cfg(unix)]
@@ -1031,6 +1034,67 @@ fn first_php_on_path() -> Option<std::path::PathBuf> {
     let path = std::env::var_os("PATH")?;
     std::env::split_paths(&path)
         .map(|dir| dir.join("php"))
+        .find(|candidate| candidate.is_file())
+}
+
+/// Run `go` with the provided arguments, executing either the managed Go,
+/// the user-configured custom Go, or an external Go binary on PATH.
+fn run_go(args: &[std::ffi::OsString]) -> ExitCode {
+    let Some(go_bin) = find_go_binary() else {
+        eprintln!("yerd: Go is not installed or configured - run `yerd install tool go` or `yerd tool path go <path>`");
+        return ExitCode::from(1);
+    };
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt as _;
+        let err = std::process::Command::new(&go_bin).args(args).exec();
+        eprintln!("yerd: failed to execute {}: {err}", go_bin.display());
+        ExitCode::from(1)
+    }
+
+    #[cfg(not(unix))]
+    {
+        match std::process::Command::new(&go_bin).args(args).status() {
+            Ok(status) => {
+                if let Some(code) = status.code() {
+                    ExitCode::from(code as u8)
+                } else {
+                    ExitCode::from(1)
+                }
+            }
+            Err(e) => {
+                eprintln!("yerd: failed to execute {}: {e}", go_bin.display());
+                ExitCode::from(1)
+            }
+        }
+    }
+}
+
+/// Locate the Go binary: checks `{data}/bin/go` (managed or custom linked),
+/// custom path marker, or the user's PATH.
+fn find_go_binary() -> Option<std::path::PathBuf> {
+    use yerd_platform::{ActivePaths, Paths};
+    if let Ok(dirs) = ActivePaths::new().resolve() {
+        // 1. Check {data}/bin/go
+        let shim = dirs.data.join("bin").join("go");
+        if shim.is_file() {
+            return Some(shim);
+        }
+        // 2. Check {data}/tools/go/.custom_path
+        let marker = dirs.data.join("tools").join("go").join(".custom_path");
+        if let Ok(p) = std::fs::read_to_string(&marker) {
+            let pb = std::path::PathBuf::from(p.trim());
+            if pb.is_file() {
+                return Some(pb);
+            }
+        }
+    }
+
+    // 3. System PATH
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path)
+        .map(|dir| dir.join("go"))
         .find(|candidate| candidate.is_file())
 }
 

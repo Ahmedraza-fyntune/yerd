@@ -583,6 +583,14 @@ pub enum Request {
         /// Tool id.
         tool: String,
     },
+    /// Configure a custom path for a dev tool (e.g. an existing Go binary),
+    /// or reset it when `path` is `None`.
+    SetToolPath {
+        /// Tool id (`"go"`).
+        tool: String,
+        /// Custom absolute binary path, or `None` to clear.
+        path: Option<String>,
+    },
     /// Install a dev tool, streaming its output as a background job. Returns
     /// [`super::Response::JobStarted`] immediately; progress (and the install's
     /// stdout/stderr) is polled via [`Self::JobStatus`]. The streaming sibling of
@@ -964,6 +972,7 @@ mod variant_name_pinning {
             Request::AddRouteRule { .. } => {}
             Request::RemoveRouteRule { .. } => {}
             Request::ListRoutes => {}
+            Request::SetToolPath { .. } => {}
         }
     }
 
@@ -1152,6 +1161,10 @@ mod variant_name_pinning {
         });
         pin(Request::UninstallTool {
             tool: "node".into(),
+        });
+        pin(Request::SetToolPath {
+            tool: "go".into(),
+            path: Some("/usr/local/go/bin/go".into()),
         });
         pin(Request::InstallToolStreamed {
             tool: "laravel".into(),

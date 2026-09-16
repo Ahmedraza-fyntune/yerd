@@ -404,6 +404,7 @@ async fn dispatch(req: Request, state: &DaemonState) -> Response {
         },
         Request::InstallTool { tool } => install_tool(&tool, state).await,
         Request::UninstallTool { tool } => uninstall_tool(&tool, state).await,
+        Request::SetToolPath { tool, path } => set_tool_path(&tool, path.as_deref(), state).await,
         Request::CheckUpdate { channel } => {
             let dl = crate::php_install::ReqwestDownloader::new();
             crate::self_update::check_update(channel, state, &dl, yerd_update::UPDATE_PUBLIC_KEY)
@@ -1537,22 +1538,92 @@ async fn list_tools_with_external(state: &DaemonState) -> Vec<yerd_ipc::ToolStat
     if !tools.iter().any(taggable) {
         return tools;
     }
+
+    // 1. Check user-configured custom paths first
+    for t in &mut tools {
+        if !taggable(t) {
+            continue;
+        }
+        if let Some(tool) = crate::tools::Tool::parse(&t.id) {
+            if let Some(custom) = crate::tools::custom_path(&state.dirs, tool) {
+                if custom.is_file() {
+                    let version = crate::tools::external::probe_external_version(tool, &custom).await;
+                    t.external = true;
+                    t.external_path = Some(custom.display().to_string());
+                    t.version = version;
+                }
+            }
+        }
+    }
+
+    if !tools.iter().any(|t| taggable(t) && !t.external) {
+        return tools;
+    }
+
     let Some(dirs) = crate::tools::external::resolve_user_path().await else {
         return tools;
     };
     let data_bin = crate::tools::bin_dir(&state.dirs);
     let data_root = &state.dirs.data;
     for t in &mut tools {
-        if !taggable(t) {
+        if !taggable(t) || t.external {
             continue;
         }
         if let Some(tool) = crate::tools::Tool::parse(&t.id) {
-            let found = crate::tools::external::external_tool(&dirs, tool, &data_bin, data_root);
-            t.external = found.is_some();
-            t.external_path = found.map(|p| p.display().to_string());
+            if let Some(found) = crate::tools::external::external_tool(&dirs, tool, &data_bin, data_root) {
+                let version = crate::tools::external::probe_external_version(tool, &found).await;
+                t.external = true;
+                t.external_path = Some(found.display().to_string());
+                t.version = version;
+            }
         }
     }
     tools
+}
+
+/// Set or clear a tool's custom external binary path.
+async fn set_tool_path(tool: &str, path: Option<&str>, state: &DaemonState) -> Response {
+    let Some(t) = crate::tools::Tool::parse(tool) else {
+        return Response::Error {
+            code: ErrorCode::NotFound,
+            message: format!("unknown tool {tool:?}"),
+        };
+    };
+    if !t.accepts_external() {
+        return Response::Error {
+            code: ErrorCode::InvalidPath,
+            message: format!("{tool} does not support external paths"),
+        };
+    }
+
+    let path_buf = match path {
+        Some(p) => {
+            let p_trim = p.trim();
+            if p_trim.is_empty() {
+                None
+            } else {
+                let pb = std::path::PathBuf::from(p_trim);
+                if !crate::tools::external::is_executable(&pb) {
+                    return Response::Error {
+                        code: ErrorCode::InvalidPath,
+                        message: format!("path {p_trim:?} is not an executable file"),
+                    };
+                }
+                Some(pb)
+            }
+        }
+        None => None,
+    };
+
+    let _mutate = state.tool_mutate.lock().await;
+    if let Err(e) = crate::tools::set_custom_path(&state.dirs, t, path_buf.as_deref()) {
+        return Response::Error {
+            code: tool_error_code(&e),
+            message: e.to_string(),
+        };
+    }
+    reconcile_tool_shims_now(state).await;
+    Response::Ok
 }
 
 /// `install tool <id>` - download + verify the latest release, then (re)build its

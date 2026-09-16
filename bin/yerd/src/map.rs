@@ -143,6 +143,29 @@ pub fn to_request(cmd: &Command) -> Result<Request, ClientError> {
             ));
         }
         Command::Tools => Request::ListTools,
+        Command::Tool { action } => match action {
+            crate::cli::ToolAction::Path { id, path, reset } => {
+                let path_str = if *reset {
+                    None
+                } else if let Some(p) = path {
+                    let canon = std::fs::canonicalize(p).unwrap_or_else(|_| p.clone());
+                    Some(canon.display().to_string())
+                } else {
+                    return Err(ClientError::Usage(
+                        "specify a path or pass --reset to clear".to_owned(),
+                    ));
+                };
+                Request::SetToolPath {
+                    tool: id.clone(),
+                    path: path_str,
+                }
+            }
+        },
+        Command::Go { .. } => {
+            return Err(ClientError::Usage(
+                "go is handled locally, not over IPC".to_owned(),
+            ));
+        }
         Command::List {
             target: crate::cli::ListTarget::Php { check, available },
         } => {
@@ -1410,7 +1433,7 @@ fn format_tools(tools: &[ToolStatus]) -> String {
         let status = if t.installed {
             t.version.as_deref().unwrap_or("installed")
         } else if t.external {
-            "external"
+            t.version.as_deref().unwrap_or("external")
         } else {
             "not installed"
         };

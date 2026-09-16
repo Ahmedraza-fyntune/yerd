@@ -13,6 +13,7 @@
 pub mod bun;
 pub mod composer;
 pub mod external;
+pub mod go;
 pub mod laravel;
 pub mod node;
 pub mod wp_cli;
@@ -34,6 +35,8 @@ pub enum Tool {
     Node,
     /// Bun - `bun`, `bunx`.
     Bun,
+    /// Go (Golang) - `go`, `gofmt`.
+    Go,
     /// The Laravel installer (`laravel new`) - a Composer package run via the
     /// managed PHP, exposed as the `laravel` multi-call shim.
     Laravel,
@@ -45,13 +48,16 @@ pub enum Tool {
 
 /// Filename of the installed-version marker inside a tool's dir.
 const VERSION_MARKER: &str = ".version";
+/// Filename of the user-configured custom external path marker.
+const CUSTOM_PATH_MARKER: &str = ".custom_path";
 
 impl Tool {
     /// Every tool, for `list_status` / reconcile.
-    pub const ALL: [Tool; 5] = [
+    pub const ALL: [Tool; 6] = [
         Tool::Composer,
         Tool::Node,
         Tool::Bun,
+        Tool::Go,
         Tool::Laravel,
         Tool::WpCli,
     ];
@@ -63,6 +69,7 @@ impl Tool {
             Tool::Composer => "composer",
             Tool::Node => "node",
             Tool::Bun => "bun",
+            Tool::Go => "go",
             Tool::Laravel => "laravel",
             Tool::WpCli => "wp-cli",
         }
@@ -75,6 +82,7 @@ impl Tool {
             Tool::Composer => "Composer",
             Tool::Node => "Node.js",
             Tool::Bun => "Bun",
+            Tool::Go => "Go",
             Tool::Laravel => "Laravel Installer",
             Tool::WpCli => "WP-CLI",
         }
@@ -88,6 +96,7 @@ impl Tool {
             Tool::Composer => "composer",
             Tool::Node => "node",
             Tool::Bun => "bun",
+            Tool::Go => "go",
             Tool::Laravel => "laravel",
             Tool::WpCli => "wp",
         }
@@ -100,6 +109,7 @@ impl Tool {
             Tool::Composer => &["composer"],
             Tool::Node => &["node", "npm", "npx"],
             Tool::Bun => &["bun", "bunx"],
+            Tool::Go => &["go", "gofmt"],
             Tool::Laravel => &["laravel"],
             Tool::WpCli => &["wp"],
         }
@@ -121,7 +131,7 @@ impl Tool {
     #[must_use]
     pub const fn accepts_external(self) -> bool {
         match self {
-            Tool::Composer | Tool::Node | Tool::Bun | Tool::Laravel => true,
+            Tool::Composer | Tool::Node | Tool::Bun | Tool::Go | Tool::Laravel => true,
             Tool::WpCli => false,
         }
     }
@@ -178,6 +188,40 @@ pub(crate) fn installed_version(dirs: &PlatformDirs, tool: Tool) -> Option<Strin
     }
 }
 
+/// Read a tool's custom external path from its `.custom_path` marker, or `None`.
+pub(crate) fn custom_path(dirs: &PlatformDirs, tool: Tool) -> Option<PathBuf> {
+    let p = std::fs::read_to_string(tool_dir(dirs, tool).join(CUSTOM_PATH_MARKER)).ok()?;
+    let p = p.trim();
+    if p.is_empty() {
+        None
+    } else {
+        Some(PathBuf::from(p))
+    }
+}
+
+/// Set or clear a tool's custom external path.
+pub(crate) fn set_custom_path(
+    dirs: &PlatformDirs,
+    tool: Tool,
+    path: Option<&Path>,
+) -> Result<(), ToolError> {
+    let d = tool_dir(dirs, tool);
+    std::fs::create_dir_all(&d).map_err(|e| ToolError::Io(format!("{}: {e}", d.display())))?;
+    let marker = d.join(CUSTOM_PATH_MARKER);
+    match path {
+        Some(p) => {
+            std::fs::write(&marker, p.to_string_lossy().as_bytes())
+                .map_err(|e| ToolError::Io(format!("{}: {e}", marker.display())))?;
+        }
+        None => {
+            if marker.exists() {
+                let _ = std::fs::remove_file(&marker);
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Status of one tool (installed + version + the commands it provides).
 #[must_use]
 pub fn status(dirs: &PlatformDirs, tool: Tool) -> ToolStatus {
@@ -229,6 +273,7 @@ pub async fn install(
         Tool::Composer => composer::install(dirs, dl).await,
         Tool::Node => node::install(dirs, dl).await,
         Tool::Bun => bun::install(dirs, dl).await,
+        Tool::Go => go::install(dirs, dl).await,
         Tool::Laravel => laravel::install(dirs, progress).await,
         Tool::WpCli => wp_cli::install(dirs, progress).await,
     };
@@ -253,10 +298,25 @@ pub fn uninstall(dirs: &PlatformDirs, tool: Tool) -> Result<(), ToolError> {
 /// the tool isn't installed or its root can't be resolved.
 #[cfg(unix)]
 fn shim_links(dirs: &PlatformDirs, tool: Tool, yerd_bin: &Path) -> Vec<(String, PathBuf)> {
+    if let Some(custom) = custom_path(dirs, tool) {
+        if custom.is_file() {
+            let mut links = vec![(tool.primary_bin().to_owned(), custom.clone())];
+            if tool == Tool::Go {
+                if let Some(parent) = custom.parent() {
+                    let gofmt = parent.join("gofmt");
+                    if gofmt.is_file() {
+                        links.push(("gofmt".to_owned(), gofmt));
+                    }
+                }
+            }
+            return links;
+        }
+    }
     match tool {
         Tool::Composer => vec![("composer".to_owned(), yerd_bin.to_path_buf())],
         Tool::Node => node::shim_links(dirs),
         Tool::Bun => bun::shim_links(dirs),
+        Tool::Go => go::shim_links(dirs),
         Tool::Laravel => vec![("laravel".to_owned(), yerd_bin.to_path_buf())],
         Tool::WpCli => vec![("wp".to_owned(), yerd_bin.to_path_buf())],
     }
@@ -274,7 +334,9 @@ pub fn reconcile_tool_shims(dirs: &PlatformDirs, yerd_bin: &Path) -> Result<(), 
     std::fs::create_dir_all(&bin).map_err(|e| ToolError::Io(format!("{}: {e}", bin.display())))?;
 
     for &tool in &Tool::ALL {
-        if installed_version(dirs, tool).is_some() {
+        let is_installed = installed_version(dirs, tool).is_some();
+        let has_custom = custom_path(dirs, tool).is_some_and(|p| p.is_file());
+        if is_installed || has_custom {
             for (name, target) in shim_links(dirs, tool, yerd_bin) {
                 crate::php_install::place_symlink(&bin.join(&name), &target)
                     .map_err(|e| ToolError::Io(e.to_string()))?;
