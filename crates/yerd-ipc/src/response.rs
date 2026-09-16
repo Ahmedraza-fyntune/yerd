@@ -13,8 +13,8 @@ use yerd_core::{PhpVersion, Site};
 use crate::dump::{DumpCounts, DumpEvent, DumpExtStatus};
 use crate::status::{
     AddableServiceType, CloudflaredStatus, DatabaseSummary, Diagnosis, FixReport, MailDetail,
-    MailSummary, NamedTunnelMeta, ServiceAvailability, ServiceStatus, SiteHostname, StatusReport,
-    ToolStatus, TunnelInfo, WordPressVersionInfo,
+    MailSummary, NamedTunnelMeta, ProviderStatus, ServiceAvailability, ServiceStatus, SiteHostname,
+    StatusReport, ToolStatus, TunnelInfo, WordPressVersionInfo,
 };
 
 // Same rule: no per-field serde renames.
@@ -376,6 +376,12 @@ pub enum Response {
         tunnels: Vec<TunnelInfo>,
         /// `cloudflared` install / account status.
         cloudflared: CloudflaredStatus,
+        /// `ngrok` host install status, when known.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ngrok: Option<Box<ProviderStatus>>,
+        /// `zrok` host install status, when known.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        zrok: Option<Box<ProviderStatus>>,
     },
     /// Reply to [`crate::Request::ListNamedTunnels`] - the account's named
     /// tunnels recorded locally, plus the per-site hostname mappings that are
@@ -953,6 +959,8 @@ mod variant_name_pinning {
                 source: Some(crate::status::CloudflaredSource::Managed),
                 logged_in: false,
             },
+            ngrok: None,
+            zrok: None,
         });
         pin_response(Response::NamedTunnels {
             tunnels: vec![crate::status::NamedTunnelMeta {

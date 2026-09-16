@@ -1094,7 +1094,14 @@ pub fn render(resp: &Response, json: bool) -> Rendered {
         Response::Tunnels {
             tunnels,
             cloudflared,
-        } => Rendered::ok(format_tunnels(tunnels, cloudflared)),
+            ngrok,
+            zrok,
+        } => Rendered::ok(format_tunnels(
+            tunnels,
+            cloudflared,
+            ngrok.as_deref(),
+            zrok.as_deref(),
+        )),
         Response::NamedTunnels {
             tunnels,
             sites,
@@ -1441,7 +1448,13 @@ fn format_tools(tools: &[ToolStatus]) -> String {
     out
 }
 
-fn format_tunnels(tunnels: &[TunnelInfo], cloudflared: &CloudflaredStatus) -> String {
+fn format_tunnels(
+    tunnels: &[TunnelInfo],
+    cloudflared: &CloudflaredStatus,
+    ngrok: Option<&yerd_ipc::ProviderStatus>,
+    zrok: Option<&yerd_ipc::ProviderStatus>,
+) -> String {
+    let mut providers = Vec::new();
     let cf = if cloudflared.installed {
         cloudflared.version.as_deref().map_or_else(
             || "cloudflared: installed".to_owned(),
@@ -1450,10 +1463,37 @@ fn format_tunnels(tunnels: &[TunnelInfo], cloudflared: &CloudflaredStatus) -> St
     } else {
         "cloudflared: not installed (run `yerd tunnel install`)".to_owned()
     };
-    if tunnels.is_empty() {
-        return format!("{cf}\nno active tunnels");
+    providers.push(cf);
+
+    if let Some(ng) = ngrok {
+        if ng.installed {
+            providers.push(
+                ng.version
+                    .as_deref()
+                    .map_or_else(|| "ngrok: installed".to_owned(), |v| format!("ngrok: {v}")),
+            );
+        } else {
+            providers.push("ngrok: not installed".to_owned());
+        }
     }
-    let mut out = format!("{cf}\n\nSITE\tPROVIDER\tSTATE\tURL");
+
+    if let Some(zr) = zrok {
+        if zr.installed {
+            providers.push(
+                zr.version
+                    .as_deref()
+                    .map_or_else(|| "zrok: installed".to_owned(), |v| format!("zrok: {v}")),
+            );
+        } else {
+            providers.push("zrok: not installed".to_owned());
+        }
+    }
+
+    let header = providers.join("\n");
+    if tunnels.is_empty() {
+        return format!("{header}\nno active tunnels");
+    }
+    let mut out = format!("{header}\n\nSITE\tPROVIDER\tSTATE\tURL");
     for t in tunnels {
         let state = match t.state {
             TunnelRunState::Running => "running",

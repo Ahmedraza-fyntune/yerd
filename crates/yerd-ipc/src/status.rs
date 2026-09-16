@@ -819,3 +819,16 @@ pub struct CloudflaredStatus {
     #[serde(default)]
     pub logged_in: bool,
 }
+
+/// Install and version status of an external tunnel provider (`ngrok` or `zrok`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ProviderStatus {
+    /// Whether the provider binary is found on PATH or in system directories.
+    pub installed: bool,
+    /// The installed provider version, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    /// The path to the resolved binary.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+}

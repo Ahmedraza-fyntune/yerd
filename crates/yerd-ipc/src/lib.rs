@@ -54,9 +54,9 @@ pub use status::{
     AddableServiceType, BrowserTrust, CaStatus, CloudflaredSource, CloudflaredStatus,
     DatabaseSummary, Diagnosis, DiagnosisCode, DomainShadow, FixReport, FixResult, MailAttachment,
     MailDetail, MailHeader, MailStatus, MailSummary, NamedTunnelMeta, PhpPoolStatus, PoolRunState,
-    PortRedirectTargets, PortStatus, ServiceAvailability, ServiceRunState, ServiceStatus, Severity,
-    SiteCounts, SiteHostname, StatusReport, ToolStatus, TunnelInfo, TunnelKind, TunnelProvider,
-    TunnelRunState, UnboundWeb, WordPressVersionInfo,
+    PortRedirectTargets, PortStatus, ProviderStatus, ServiceAvailability, ServiceRunState,
+    ServiceStatus, Severity, SiteCounts, SiteHostname, StatusReport, ToolStatus, TunnelInfo,
+    TunnelKind, TunnelProvider, TunnelRunState, UnboundWeb, WordPressVersionInfo,
 };
 pub use update::{Channel, StagedArtifact, UpdateSource};
 

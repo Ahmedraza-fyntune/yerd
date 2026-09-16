@@ -16,7 +16,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use yerd_ipc::{
-    CloudflaredStatus, ErrorCode, Response, TunnelInfo, TunnelKind as WireKind,
+    CloudflaredStatus, ErrorCode, ProviderStatus, Response, TunnelInfo, TunnelKind as WireKind,
     TunnelProvider as WireProvider, TunnelRunState,
 };
 use yerd_platform::PlatformDirs;
@@ -249,7 +249,7 @@ pub(super) async fn resolve_site(
     Some((s.name().to_owned(), s.secure(), tld, host))
 }
 
-/// Find a provider binary (`ngrok` or `zrok`) on PATH or user PATH.
+/// Find a provider binary (`ngrok` or `zrok`) on PATH, user PATH, or standard binary dirs.
 pub(super) async fn find_provider_binary(provider: TunnelProvider) -> Option<PathBuf> {
     let name = provider.binary_name();
     if let Some(path) = std::env::var_os("PATH") {
@@ -266,6 +266,73 @@ pub(super) async fn find_provider_binary(provider: TunnelProvider) -> Option<Pat
             if install::is_executable(&candidate) {
                 return Some(candidate);
             }
+        }
+    }
+    let common_dirs = [
+        PathBuf::from("/usr/local/bin"),
+        PathBuf::from("/usr/bin"),
+        PathBuf::from("/opt/homebrew/bin"),
+        PathBuf::from("/home/linuxbrew/.linuxbrew/bin"),
+        PathBuf::from("/snap/bin"),
+    ];
+    for dir in common_dirs {
+        let candidate = dir.join(name);
+        if install::is_executable(&candidate) {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+/// Resolve the install status and version for a tunnel provider binary.
+pub(super) async fn provider_status(provider: TunnelProvider) -> ProviderStatus {
+    let Some(bin) = find_provider_binary(provider).await else {
+        return ProviderStatus {
+            installed: false,
+            version: None,
+            path: None,
+        };
+    };
+
+    let path_str = bin.to_string_lossy().to_string();
+    let version = probe_provider_version(&bin).await;
+
+    ProviderStatus {
+        installed: true,
+        version,
+        path: Some(path_str),
+    }
+}
+
+async fn probe_provider_version(binary: &std::path::Path) -> Option<String> {
+    let mut cmd = tokio::process::Command::new(binary);
+    cmd.arg("version")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true);
+
+    let output = tokio::time::timeout(std::time::Duration::from_millis(500), cmd.output())
+        .await
+        .ok()?
+        .ok()?;
+
+    let text = if output.stdout.is_empty() {
+        String::from_utf8_lossy(&output.stderr).to_string()
+    } else {
+        String::from_utf8_lossy(&output.stdout).to_string()
+    };
+
+    parse_provider_version(&text)
+}
+
+fn parse_provider_version(text: &str) -> Option<String> {
+    for word in text.split_whitespace() {
+        let trimmed = word
+            .trim_start_matches('v')
+            .trim_end_matches([',', ';', ':']);
+        if trimmed.chars().next().is_some_and(|c| c.is_ascii_digit()) && trimmed.contains('.') {
+            return Some(trimmed.to_string());
         }
     }
     None
@@ -393,6 +460,8 @@ pub(super) async fn tunnels_response(state: &DaemonState) -> Response {
     Response::Tunnels {
         tunnels,
         cloudflared: cloudflared_status(state).await,
+        ngrok: Some(Box::new(provider_status(TunnelProvider::Ngrok).await)),
+        zrok: Some(Box::new(provider_status(TunnelProvider::Zrok).await)),
     }
 }
 

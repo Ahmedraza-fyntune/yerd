@@ -52,6 +52,7 @@ import {
 import type {
   CloudflaredStatus,
   NamedTunnelMeta,
+  ProviderStatus,
   Site,
   TunnelInfo,
   TunnelProvider,
@@ -61,6 +62,8 @@ const toast = useToast();
 const { connected } = useDaemon();
 
 const cloudflared = ref<CloudflaredStatus | null>(null);
+const ngrok = ref<ProviderStatus | null>(null);
+const zrok = ref<ProviderStatus | null>(null);
 const tunnels = ref<TunnelInfo[]>([]);
 const sites = ref<Site[]>([]);
 const shareSite = ref("");
@@ -74,6 +77,8 @@ const providerOptions = [
 const busy = ref<string | null>(null);
 
 const installed = computed(() => cloudflared.value?.installed ?? false);
+const ngrokInstalled = computed(() => ngrok.value?.installed ?? false);
+const zrokInstalled = computed(() => zrok.value?.installed ?? false);
 const loggedIn = computed(() => cloudflared.value?.logged_in ?? false);
 // Whether the active cloudflared came from the user's PATH rather than
 // Yerd's own managed download - offers a way to switch to the bundled copy.
@@ -151,6 +156,8 @@ async function appendLog(lines: string[]): Promise<void> {
 
 type SharePageData = {
   cloudflared: CloudflaredStatus;
+  ngrok?: ProviderStatus;
+  zrok?: ProviderStatus;
   tunnels: TunnelInfo[];
   sites: Site[];
   named: Awaited<ReturnType<typeof listNamedTunnels>>;
@@ -166,7 +173,14 @@ async function fetchSharePage(): Promise<SharePageData> {
     listSites(),
     listNamedTunnels(),
   ]);
-  return { cloudflared: status.cloudflared, tunnels: status.tunnels, sites: siteList, named };
+  return {
+    cloudflared: status.cloudflared,
+    ngrok: status.ngrok,
+    zrok: status.zrok,
+    tunnels: status.tunnels,
+    sites: siteList,
+    named,
+  };
 }
 
 // Module-cached (stale-while-revalidate): revisiting the page renders the last
@@ -177,8 +191,23 @@ const { data, loading, refresh, mutate, error } = useResource("share-page", fetc
 // Fold an authoritative tunnel-status response into the cache. Writing through
 // `mutate` (not the local refs directly) bumps useResource's epoch, so a
 // background poll fetch that started before this action can't revert it.
-function applyTunnelStatus(r: { tunnels: TunnelInfo[]; cloudflared: CloudflaredStatus }): void {
-  mutate((cur) => (cur ? { ...cur, tunnels: r.tunnels, cloudflared: r.cloudflared } : cur));
+function applyTunnelStatus(r: {
+  tunnels: TunnelInfo[];
+  cloudflared: CloudflaredStatus;
+  ngrok?: ProviderStatus;
+  zrok?: ProviderStatus;
+}): void {
+  mutate((cur) =>
+    cur
+      ? {
+          ...cur,
+          tunnels: r.tunnels,
+          cloudflared: r.cloudflared,
+          ngrok: r.ngrok ?? cur.ngrok,
+          zrok: r.zrok ?? cur.zrok,
+        }
+      : cur,
+  );
 }
 
 // Optimistically add/clear a site's hostname mapping in the cache.
@@ -194,6 +223,8 @@ function setNamedSite(site: string, hostname: string | null): void {
 /** Mirror fetched page data into the local refs the handlers mutate optimistically. */
 function applyData(d: SharePageData): void {
   cloudflared.value = d.cloudflared;
+  ngrok.value = d.ngrok ?? null;
+  zrok.value = d.zrok ?? null;
   tunnels.value = d.tunnels;
   sites.value = d.sites;
   const staleSelection =
@@ -532,13 +563,20 @@ onUnmounted(registerViewActions({ refresh: () => void reload() }));
 
         <CardContent>
           <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <div class="space-y-1 text-sm">
-              <p class="text-muted-foreground">
-                Sharing needs <span class="font-medium text-foreground">ngrok</span> installed on your system with an auth token configured:
-              </p>
-              <code class="inline-block rounded bg-muted px-2 py-0.5 font-mono text-xs text-foreground">
-                ngrok config add-authtoken &lt;token&gt;
-              </code>
+            <div class="flex items-center gap-2 text-sm">
+              <Badge v-if="ngrokInstalled" variant="secondary" class="gap-1">
+                <CheckCircle2 class="size-3 text-emerald-500" />
+                ngrok {{ ngrok?.version ? `v${ngrok.version}` : "ready" }}
+                <span class="text-muted-foreground">(system)</span>
+              </Badge>
+              <div v-else class="space-y-1 text-sm">
+                <p class="text-muted-foreground">
+                  Sharing needs <span class="font-medium text-foreground">ngrok</span> installed on your system with an auth token configured:
+                </p>
+                <code class="inline-block rounded bg-muted px-2 py-0.5 font-mono text-xs text-foreground">
+                  ngrok config add-authtoken &lt;token&gt;
+                </code>
+              </div>
             </div>
             <div class="flex shrink-0 items-center gap-2">
               <Button
@@ -549,6 +587,7 @@ onUnmounted(registerViewActions({ refresh: () => void reload() }));
                 <ExternalLink class="mr-1.5 size-3.5" /> Get auth token
               </Button>
               <Button
+                v-if="!ngrokInstalled"
                 variant="outline"
                 size="sm"
                 @click="openExternal('https://ngrok.com/download')"
@@ -572,13 +611,20 @@ onUnmounted(registerViewActions({ refresh: () => void reload() }));
 
         <CardContent>
           <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <div class="space-y-1 text-sm">
-              <p class="text-muted-foreground">
-                Sharing needs <span class="font-medium text-foreground">zrok</span> installed on your system and enabled with your account:
-              </p>
-              <code class="inline-block rounded bg-muted px-2 py-0.5 font-mono text-xs text-foreground">
-                zrok enable &lt;token&gt;
-              </code>
+            <div class="flex items-center gap-2 text-sm">
+              <Badge v-if="zrokInstalled" variant="secondary" class="gap-1">
+                <CheckCircle2 class="size-3 text-emerald-500" />
+                zrok {{ zrok?.version ? `v${zrok.version}` : "ready" }}
+                <span class="text-muted-foreground">(system)</span>
+              </Badge>
+              <div v-else class="space-y-1 text-sm">
+                <p class="text-muted-foreground">
+                  Sharing needs <span class="font-medium text-foreground">zrok</span> installed on your system and enabled with your account:
+                </p>
+                <code class="inline-block rounded bg-muted px-2 py-0.5 font-mono text-xs text-foreground">
+                  zrok enable &lt;token&gt;
+                </code>
+              </div>
             </div>
             <div class="flex shrink-0 items-center gap-2">
               <Button
@@ -589,6 +635,7 @@ onUnmounted(registerViewActions({ refresh: () => void reload() }));
                 <ExternalLink class="mr-1.5 size-3.5" /> Quickstart guide
               </Button>
               <Button
+                v-if="!zrokInstalled"
                 variant="outline"
                 size="sm"
                 @click="openExternal('https://github.com/openziti/zrok/releases')"
@@ -638,7 +685,14 @@ onUnmounted(registerViewActions({ refresh: () => void reload() }));
             </div>
             <Button
               class="h-9"
-              :disabled="busy !== null || !shareSite || connected !== true || (selectedProvider === 'cloudflare' && !installed)"
+              :disabled="
+                busy !== null ||
+                !shareSite ||
+                connected !== true ||
+                (selectedProvider === 'cloudflare' && !installed) ||
+                (selectedProvider === 'ngrok' && !ngrokInstalled) ||
+                (selectedProvider === 'zrok' && !zrokInstalled)
+              "
               @click="doShare"
             >
               <Spinner v-if="busy === `share:${shareSite}`" class="mr-1.5 size-3.5" />
@@ -652,6 +706,18 @@ onUnmounted(registerViewActions({ refresh: () => void reload() }));
             class="mb-3 text-xs text-amber-500"
           >
             Cloudflare Tunnel requires cloudflared. Install it above before sharing.
+          </p>
+          <p
+            v-else-if="selectedProvider === 'ngrok' && !ngrokInstalled"
+            class="mb-3 text-xs text-amber-500"
+          >
+            ngrok was not detected on your system. Install ngrok before sharing.
+          </p>
+          <p
+            v-else-if="selectedProvider === 'zrok' && !zrokInstalled"
+            class="mb-3 text-xs text-amber-500"
+          >
+            zrok was not detected on your system. Install zrok before sharing.
           </p>
 
           <p

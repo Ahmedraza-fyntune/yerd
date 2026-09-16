@@ -671,6 +671,8 @@ export type Response =
       type: "tunnels";
       tunnels: TunnelInfo[];
       cloudflared: CloudflaredStatus;
+      ngrok?: ProviderStatus;
+      zrok?: ProviderStatus;
     }
   | {
       type: "named_tunnels";
@@ -757,6 +759,15 @@ export interface CloudflaredStatus {
   source?: CloudflaredSource;
   /** Whether a Cloudflare account is logged in (Phase 2). */
   logged_in: boolean;
+}
+
+/** crates/yerd-ipc/src/status.rs - ProviderStatus. */
+export interface ProviderStatus {
+  installed: boolean;
+  /** Installed provider version when known; absent otherwise. */
+  version?: string;
+  /** Path to the detected executable. */
+  path?: string;
 }
 
 /** crates/yerd-ipc/src/status.rs - NamedTunnelMeta. */

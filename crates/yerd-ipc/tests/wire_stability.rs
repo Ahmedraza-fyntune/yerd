@@ -21,10 +21,10 @@ use yerd_ipc::{
     AddableServiceType, CaStatus, Channel, CloudflaredSource, CloudflaredStatus, DatabaseSummary,
     Diagnosis, DiagnosisCode, DumpCategory, DumpCounts, DumpEvent, DumpExtStatus, ErrorCode,
     FixReport, FixResult, MailAttachment, MailDetail, MailHeader, MailStatus, MailSummary,
-    NamedTunnelMeta, PhpPoolStatus, PoolRunState, PortRedirectTargets, PortStatus, ProxyEntry,
-    ProxyRuleEntry, Request, Response, ServiceAvailability, ServiceRunState, ServiceStatus,
-    Severity, SiteCounts, SiteHostname, StagedArtifact, StatusReport, ToolStatus, TunnelInfo,
-    TunnelKind, TunnelProvider, TunnelRunState, UpdateSource,
+    NamedTunnelMeta, PhpPoolStatus, PoolRunState, PortRedirectTargets, PortStatus, ProviderStatus,
+    ProxyEntry, ProxyRuleEntry, Request, Response, ServiceAvailability, ServiceRunState,
+    ServiceStatus, Severity, SiteCounts, SiteHostname, StagedArtifact, StatusReport, ToolStatus,
+    TunnelInfo, TunnelKind, TunnelProvider, TunnelRunState, UpdateSource,
 };
 
 // ---------- Request ----------
@@ -2967,6 +2967,8 @@ fn response_tunnels_byte_shape() {
             source: Some(CloudflaredSource::Managed),
             logged_in: false,
         },
+        ngrok: None,
+        zrok: None,
     };
     let s = serde_json::to_string(&r).unwrap();
     let expected = r#"{"type":"tunnels","tunnels":[{"site":"app","provider":"cloudflare","kind":"quick","state":"running","url":"https://calm-river-1234.trycloudflare.com"}],"cloudflared":{"installed":true,"version":"2026.6.1","source":"managed","logged_in":false}}"#;
@@ -2993,6 +2995,8 @@ fn response_tunnels_named_and_empty_byte_shape() {
             source: Some(CloudflaredSource::System),
             logged_in: true,
         },
+        ngrok: None,
+        zrok: None,
     };
     let s = serde_json::to_string(&named).unwrap();
     assert!(s.contains(r#""provider":"cloudflare""#), "{s}");
@@ -3010,6 +3014,8 @@ fn response_tunnels_named_and_empty_byte_shape() {
             source: None,
             logged_in: false,
         },
+        ngrok: None,
+        zrok: None,
     };
     let s = serde_json::to_string(&empty).unwrap();
     assert_eq!(
@@ -3017,6 +3023,38 @@ fn response_tunnels_named_and_empty_byte_shape() {
         r#"{"type":"tunnels","tunnels":[],"cloudflared":{"installed":false,"logged_in":false}}"#
     );
     assert_eq!(serde_json::from_str::<Response>(&s).unwrap(), empty);
+}
+
+#[test]
+fn response_tunnels_with_provider_status_byte_shape() {
+    let r = Response::Tunnels {
+        tunnels: vec![],
+        cloudflared: CloudflaredStatus {
+            installed: false,
+            version: None,
+            source: None,
+            logged_in: false,
+        },
+        ngrok: Some(Box::new(ProviderStatus {
+            installed: true,
+            version: Some("3.39.11".into()),
+            path: Some("/usr/local/bin/ngrok".into()),
+        })),
+        zrok: Some(Box::new(ProviderStatus {
+            installed: false,
+            version: None,
+            path: None,
+        })),
+    };
+    let s = serde_json::to_string(&r).unwrap();
+    assert!(
+        s.contains(
+            r#""ngrok":{"installed":true,"version":"3.39.11","path":"/usr/local/bin/ngrok"}"#
+        ),
+        "{s}"
+    );
+    assert!(s.contains(r#""zrok":{"installed":false}"#), "{s}");
+    assert_eq!(serde_json::from_str::<Response>(&s).unwrap(), r);
 }
 
 #[test]

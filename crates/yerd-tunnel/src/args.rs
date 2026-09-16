@@ -51,12 +51,7 @@ pub fn ngrok_tunnel_args(origin: &OriginTarget, authtoken: Option<&str>) -> Vec<
     let mut args: Vec<OsString> = vec![
         "http".into(),
         origin.url().into(),
-        "--host-header".into(),
-        origin.host_header.clone().into(),
-        "--log".into(),
-        "stdout".into(),
-        "--log-format".into(),
-        "logfmt".into(),
+    
     ];
     if let Some(token) = authtoken {
         args.push("--authtoken".into());
