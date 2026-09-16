@@ -43,6 +43,39 @@ pub fn quick_tunnel_args(origin: &OriginTarget) -> Vec<OsString> {
     args
 }
 
+/// Args for an ngrok tunnel: `ngrok http <origin.port> --host-header <origin.host_header> ...`.
+///
+/// Log format is forced to logfmt on stdout/stderr, captured by supervisor.
+#[must_use]
+pub fn ngrok_tunnel_args(origin: &OriginTarget, authtoken: Option<&str>) -> Vec<OsString> {
+    let mut args: Vec<OsString> = vec![
+        "http".into(),
+        origin.url().into(),
+        "--host-header".into(),
+        origin.host_header.clone().into(),
+        "--log".into(),
+        "stdout".into(),
+        "--log-format".into(),
+        "logfmt".into(),
+    ];
+    if let Some(token) = authtoken {
+        args.push("--authtoken".into());
+        args.push(token.into());
+    }
+    args
+}
+
+/// Args for a zrok public share tunnel: `zrok share public <origin.url> --headless`.
+#[must_use]
+pub fn zrok_tunnel_args(origin: &OriginTarget) -> Vec<OsString> {
+    vec![
+        "share".into(),
+        "public".into(),
+        origin.url().into(),
+        "--headless".into(),
+    ]
+}
+
 /// Args to run a named tunnel from a local config:
 /// `cloudflared --origincert <cert> --config <config> tunnel run`.
 ///
@@ -265,6 +298,39 @@ mod tests {
         assert_eq!(
             strings(&delete_args("mysite", cert)),
             vec!["--origincert", "/t/cert.pem", "tunnel", "delete", "mysite"]
+        );
+    }
+
+    #[test]
+    fn ngrok_args_with_and_without_token() {
+        let origin = OriginTarget::for_site("mysite.test", false, 8080, 8443);
+        let args_no_token = strings(&ngrok_tunnel_args(&origin, None));
+        assert_eq!(
+            args_no_token,
+            vec![
+                "http",
+                "http://127.0.0.1:8080",
+                "--host-header",
+                "mysite.test",
+                "--log",
+                "stdout",
+                "--log-format",
+                "logfmt",
+            ]
+        );
+
+        let args_token = strings(&ngrok_tunnel_args(&origin, Some("test-token-123")));
+        assert!(args_token.contains(&"--authtoken".to_string()));
+        assert!(args_token.contains(&"test-token-123".to_string()));
+    }
+
+    #[test]
+    fn zrok_args_generation() {
+        let origin = OriginTarget::for_site("mysite.test", true, 8080, 8443);
+        let args = strings(&zrok_tunnel_args(&origin));
+        assert_eq!(
+            args,
+            vec!["share", "public", "https://127.0.0.1:8443", "--headless",]
         );
     }
 }

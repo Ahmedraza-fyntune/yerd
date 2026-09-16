@@ -740,16 +740,33 @@ pub enum TunnelRunState {
     Failed,
 }
 
+/// Which tunneling provider is serving the tunnel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum TunnelProvider {
+    /// Cloudflare Tunnels (Quick or Named).
+    #[default]
+    Cloudflare,
+    /// ngrok.
+    Ngrok,
+    /// zrok.
+    Zrok,
+}
+
 /// One live tunnel, as reported in [`crate::Response::Tunnels`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TunnelInfo {
     /// The site the tunnel publishes.
     pub site: String,
+    /// Which tunneling provider is used (defaults to cloudflare for backwards compatibility).
+    #[serde(default)]
+    pub provider: TunnelProvider,
     /// Quick vs Named.
     pub kind: TunnelKind,
     /// Whether the process is alive or has died.
     pub state: TunnelRunState,
-    /// The public URL (Quick tunnels) once captured.
+    /// The public URL (Quick/ephemeral tunnels) once captured.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
     /// The configured public hostname (Named tunnels).

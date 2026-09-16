@@ -6,6 +6,7 @@ defineProps<{
   options: readonly { value: T; label: string }[];
   disabled?: boolean;
   ariaLabel?: string;
+  class?: string;
 }>();
 defineEmits<{ "update:modelValue": [T] }>();
 </script>
@@ -18,6 +19,7 @@ defineEmits<{ "update:modelValue": [T] }>();
     :class="
       cn(
         'h-8 rounded-md border border-input bg-background px-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50',
+        $props.class,
       )
     "
     @change="

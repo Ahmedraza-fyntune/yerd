@@ -24,7 +24,7 @@ use yerd_ipc::{
     NamedTunnelMeta, PhpPoolStatus, PoolRunState, PortRedirectTargets, PortStatus, ProxyEntry,
     ProxyRuleEntry, Request, Response, ServiceAvailability, ServiceRunState, ServiceStatus,
     Severity, SiteCounts, SiteHostname, StagedArtifact, StatusReport, ToolStatus, TunnelInfo,
-    TunnelKind, TunnelRunState, UpdateSource,
+    TunnelKind, TunnelProvider, TunnelRunState, UpdateSource,
 };
 
 // ---------- Request ----------
@@ -2909,10 +2909,27 @@ fn request_install_cloudflared_streamed_byte_shape() {
 
 #[test]
 fn request_start_quick_tunnel_byte_shape() {
-    let r = Request::StartQuickTunnel { site: "app".into() };
+    let r = Request::StartQuickTunnel {
+        site: "app".into(),
+        provider: None,
+    };
     let s = serde_json::to_string(&r).unwrap();
     assert_eq!(s, r#"{"type":"start_quick_tunnel","site":"app"}"#);
     assert_eq!(serde_json::from_str::<Request>(&s).unwrap(), r);
+
+    let with_ngrok = Request::StartQuickTunnel {
+        site: "app".into(),
+        provider: Some(TunnelProvider::Ngrok),
+    };
+    let s_ngrok = serde_json::to_string(&with_ngrok).unwrap();
+    assert_eq!(
+        s_ngrok,
+        r#"{"type":"start_quick_tunnel","site":"app","provider":"ngrok"}"#
+    );
+    assert_eq!(
+        serde_json::from_str::<Request>(&s_ngrok).unwrap(),
+        with_ngrok
+    );
 }
 
 #[test]
@@ -2938,6 +2955,7 @@ fn response_tunnels_byte_shape() {
     let r = Response::Tunnels {
         tunnels: vec![TunnelInfo {
             site: "app".into(),
+            provider: TunnelProvider::Cloudflare,
             kind: TunnelKind::Quick,
             state: TunnelRunState::Running,
             url: Some("https://calm-river-1234.trycloudflare.com".into()),
@@ -2951,7 +2969,7 @@ fn response_tunnels_byte_shape() {
         },
     };
     let s = serde_json::to_string(&r).unwrap();
-    let expected = r#"{"type":"tunnels","tunnels":[{"site":"app","kind":"quick","state":"running","url":"https://calm-river-1234.trycloudflare.com"}],"cloudflared":{"installed":true,"version":"2026.6.1","source":"managed","logged_in":false}}"#;
+    let expected = r#"{"type":"tunnels","tunnels":[{"site":"app","provider":"cloudflare","kind":"quick","state":"running","url":"https://calm-river-1234.trycloudflare.com"}],"cloudflared":{"installed":true,"version":"2026.6.1","source":"managed","logged_in":false}}"#;
     assert_eq!(s, expected);
     assert_eq!(serde_json::from_str::<Response>(&s).unwrap(), r);
 }
@@ -2963,6 +2981,7 @@ fn response_tunnels_named_and_empty_byte_shape() {
     let named = Response::Tunnels {
         tunnels: vec![TunnelInfo {
             site: "shop".into(),
+            provider: TunnelProvider::Cloudflare,
             kind: TunnelKind::Named,
             state: TunnelRunState::Running,
             url: None,
@@ -2976,6 +2995,7 @@ fn response_tunnels_named_and_empty_byte_shape() {
         },
     };
     let s = serde_json::to_string(&named).unwrap();
+    assert!(s.contains(r#""provider":"cloudflare""#), "{s}");
     assert!(s.contains(r#""kind":"named""#), "{s}");
     assert!(s.contains(r#""hostname":"shop.example.com""#), "{s}");
     assert!(!s.contains(r#""url""#), "{s}");
@@ -3016,6 +3036,18 @@ fn tunnel_kind_each_variant_byte_shape() {
         (TunnelKind::Named, r#""named""#),
     ] {
         assert_eq!(serde_json::to_string(&k).unwrap(), expected);
+    }
+}
+
+#[test]
+fn tunnel_provider_each_variant_byte_shape() {
+    for (p, expected) in [
+        (TunnelProvider::Cloudflare, r#""cloudflare""#),
+        (TunnelProvider::Ngrok, r#""ngrok""#),
+        (TunnelProvider::Zrok, r#""zrok""#),
+    ] {
+        assert_eq!(serde_json::to_string(&p).unwrap(), expected);
+        assert_eq!(serde_json::from_str::<TunnelProvider>(expected).unwrap(), p);
     }
 }
 

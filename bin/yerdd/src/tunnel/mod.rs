@@ -16,12 +16,13 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use yerd_ipc::{
-    CloudflaredStatus, ErrorCode, Response, TunnelInfo, TunnelKind as WireKind, TunnelRunState,
+    CloudflaredStatus, ErrorCode, Response, TunnelInfo, TunnelKind as WireKind,
+    TunnelProvider as WireProvider, TunnelRunState,
 };
 use yerd_platform::PlatformDirs;
 use yerd_supervise::{SystemClock, TokioProcessSpawner};
 use yerd_tunnel::manager::{TunnelSnapshot, TunnelState};
-use yerd_tunnel::{OriginTarget, Step, TunnelKind, TunnelManager};
+use yerd_tunnel::{OriginTarget, Step, TunnelKind, TunnelManager, TunnelProvider};
 
 use crate::state::DaemonState;
 
@@ -128,18 +129,47 @@ fn is_downgrade(existing: Option<&install::Resolved>, fresh: Option<&install::Re
     existing_is_managed && !fresh_is_managed
 }
 
-/// `StartQuickTunnel`: publish a site at a random `*.trycloudflare.com` URL.
+/// `StartQuickTunnel`: publish a site at an ephemeral tunnel URL.
 ///
+/// Supports Cloudflare, ngrok, and zrok providers.
 /// Registers + spawns the child under a brief manager lock, then drives
 /// readiness with the lock released between ticks (see [`yerd_tunnel`]'s tick
 /// model) so `StopTunnel`/`TunnelStatus`/shutdown stay responsive and a stuck
 /// connect can be cancelled.
-pub async fn start_quick_tunnel(site: &str, state: &DaemonState) -> Response {
-    let Some(resolved) = resolved_cloudflared(state).await else {
-        return Response::Error {
-            code: ErrorCode::NotFound,
-            message: "cloudflared is not installed - install it from Integrations first".into(),
-        };
+pub async fn start_quick_tunnel(
+    site: &str,
+    provider: Option<WireProvider>,
+    state: &DaemonState,
+) -> Response {
+    let provider = match provider {
+        Some(WireProvider::Ngrok) => TunnelProvider::Ngrok,
+        Some(WireProvider::Zrok) => TunnelProvider::Zrok,
+        Some(WireProvider::Cloudflare | _) | None => TunnelProvider::Cloudflare,
+    };
+
+    let binary = match provider {
+        TunnelProvider::Cloudflare => {
+            let Some(resolved) = resolved_cloudflared(state).await else {
+                return Response::Error {
+                    code: ErrorCode::NotFound,
+                    message: "cloudflared is not installed - install it from Integrations first"
+                        .into(),
+                };
+            };
+            resolved.binary
+        }
+        other => {
+            let Some(bin) = find_provider_binary(other).await else {
+                return Response::Error {
+                    code: ErrorCode::NotFound,
+                    message: format!(
+                        "{} is not installed or not found on PATH",
+                        other.binary_name()
+                    ),
+                };
+            };
+            bin
+        }
     };
 
     let Some((name, secure, _tld, host)) = resolve_site(state, site).await else {
@@ -150,11 +180,17 @@ pub async fn start_quick_tunnel(site: &str, state: &DaemonState) -> Response {
     };
 
     let origin = OriginTarget::for_site(&host, secure, state.http.bound, state.https.bound);
-    let args = yerd_tunnel::args::quick_tunnel_args(&origin);
+    let args = match provider {
+        TunnelProvider::Cloudflare => yerd_tunnel::args::quick_tunnel_args(&origin),
+        TunnelProvider::Ngrok => yerd_tunnel::args::ngrok_tunnel_args(&origin, None),
+        TunnelProvider::Zrok => yerd_tunnel::args::zrok_tunnel_args(&origin),
+    };
+
     run_to_ready(
         state,
         &name,
-        resolved.binary,
+        provider,
+        binary,
         args,
         pinned_home_env(state),
         TunnelKind::Quick,
@@ -213,15 +249,38 @@ pub(super) async fn resolve_site(
     Some((s.name().to_owned(), s.secure(), tld, host))
 }
 
+/// Find a provider binary (`ngrok` or `zrok`) on PATH or user PATH.
+pub(super) async fn find_provider_binary(provider: TunnelProvider) -> Option<PathBuf> {
+    let name = provider.binary_name();
+    if let Some(path) = std::env::var_os("PATH") {
+        for dir in std::env::split_paths(&path) {
+            let candidate = dir.join(name);
+            if install::is_executable(&candidate) {
+                return Some(candidate);
+            }
+        }
+    }
+    if let Some(user_dirs) = crate::tools::external::resolve_user_path().await {
+        for dir in user_dirs {
+            let candidate = dir.join(name);
+            if install::is_executable(&candidate) {
+                return Some(candidate);
+            }
+        }
+    }
+    None
+}
+
 /// Register + spawn a tunnel for `name` under a brief manager lock, then drive
 /// readiness with the lock released between ticks (see [`yerd_tunnel`]'s tick
-/// model). Shared by the Quick and Named start paths. `binary` is the
-/// already-resolved `cloudflared` to spawn (see `resolved_cloudflared`).
+/// model). Shared by the Quick and Named start paths.
 /// Returns the live `Response::Tunnels` on readiness, or a `Response::Error`
 /// on failure.
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn run_to_ready(
     state: &DaemonState,
     name: &str,
+    provider: TunnelProvider,
     binary: PathBuf,
     args: Vec<std::ffi::OsString>,
     env: Vec<(std::ffi::OsString, std::ffi::OsString)>,
@@ -239,6 +298,7 @@ pub(super) async fn run_to_ready(
     }
 
     let spec = yerd_tunnel::LaunchSpec {
+        provider,
         binary,
         args,
         env,
@@ -340,6 +400,11 @@ pub(super) async fn tunnels_response(state: &DaemonState) -> Response {
 fn to_wire(s: TunnelSnapshot) -> TunnelInfo {
     TunnelInfo {
         site: s.site,
+        provider: match s.provider {
+            TunnelProvider::Cloudflare => WireProvider::Cloudflare,
+            TunnelProvider::Ngrok => WireProvider::Ngrok,
+            TunnelProvider::Zrok => WireProvider::Zrok,
+        },
         kind: match s.kind {
             TunnelKind::Quick => WireKind::Quick,
             TunnelKind::Named => WireKind::Named,

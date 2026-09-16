@@ -727,15 +727,19 @@ export interface DatabaseSummary {
 /** crates/yerd-ipc/src/status.rs - TunnelKind. */
 export type TunnelKind = "quick" | "named";
 
+/** crates/yerd-ipc/src/status.rs - TunnelProvider. */
+export type TunnelProvider = "cloudflare" | "ngrok" | "zrok";
+
 /** crates/yerd-ipc/src/status.rs - TunnelRunState. */
 export type TunnelRunState = "running" | "failed";
 
 /** crates/yerd-ipc/src/status.rs - TunnelInfo. */
 export interface TunnelInfo {
   site: string;
+  provider?: TunnelProvider;
   kind: TunnelKind;
   state: TunnelRunState;
-  /** Public URL of a Quick tunnel once captured; absent otherwise. */
+  /** Public URL of an ephemeral tunnel once captured; absent otherwise. */
   url?: string;
   /** Configured public hostname of a Named tunnel; absent otherwise. */
   hostname?: string;

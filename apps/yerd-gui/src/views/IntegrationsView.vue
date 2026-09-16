@@ -5,6 +5,7 @@ import {
   Cloud,
   Copy,
   Download,
+  ExternalLink,
   Globe,
   Lock,
   Share2,
@@ -24,6 +25,7 @@ import Combobox from "@/components/ui/Combobox.vue";
 import EmptyState from "@/components/ui/EmptyState.vue";
 import Input from "@/components/ui/Input.vue";
 import Modal from "@/components/ui/Modal.vue";
+import Select from "@/components/ui/Select.vue";
 import Spinner from "@/components/ui/Spinner.vue";
 import { registerViewActions } from "@/lib/shortcuts/useViewActions";
 import { useDaemon } from "@/composables/useDaemon";
@@ -47,7 +49,13 @@ import {
   stopTunnel,
   tunnelStatus,
 } from "@/ipc/client";
-import type { CloudflaredStatus, NamedTunnelMeta, Site, TunnelInfo } from "@/ipc/types";
+import type {
+  CloudflaredStatus,
+  NamedTunnelMeta,
+  Site,
+  TunnelInfo,
+  TunnelProvider,
+} from "@/ipc/types";
 
 const toast = useToast();
 const { connected } = useDaemon();
@@ -56,6 +64,12 @@ const cloudflared = ref<CloudflaredStatus | null>(null);
 const tunnels = ref<TunnelInfo[]>([]);
 const sites = ref<Site[]>([]);
 const shareSite = ref("");
+const selectedProvider = ref<TunnelProvider>("cloudflare");
+const providerOptions = [
+  { value: "cloudflare" as TunnelProvider, label: "Cloudflare" },
+  { value: "ngrok" as TunnelProvider, label: "ngrok" },
+  { value: "zrok" as TunnelProvider, label: "zrok" },
+] as const;
 // A long-running op in flight, e.g. "share:app" / "stop:app" / "install".
 const busy = ref<string | null>(null);
 
@@ -386,11 +400,11 @@ async function doShare(): Promise<void> {
   if (!site) return;
   busy.value = `share:${site}`;
   try {
-    const r = await startQuickTunnel(site);
+    const r = await startQuickTunnel(site, selectedProvider.value);
     applyTunnelStatus(r);
     shareSite.value = "";
     const url = r.tunnels.find((t) => t.site === site)?.url;
-    toast.success(`Sharing ${site}`, url ?? undefined);
+    toast.success(`Sharing ${site} via ${selectedProvider.value}`, url ?? undefined);
   } catch (e) {
     toast.error(`Couldn't share ${site}`, (e as IpcError).message);
   } finally {
@@ -506,7 +520,87 @@ onUnmounted(registerViewActions({ refresh: () => void reload() }));
         </CardContent>
       </Card>
 
-      <Card v-if="installed">
+      <Card>
+        <CardHeader>
+          <CardTitle>ngrok</CardTitle>
+          <CardDescription>
+            Expose local servers to the internet over secure tunnels with request inspection.
+            Quick tunnels run directly through ngrok's edge and provide a public URL. Requires
+            the ngrok binary and an account auth token.
+          </CardDescription>
+        </CardHeader>
+
+        <CardContent>
+          <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div class="space-y-1 text-sm">
+              <p class="text-muted-foreground">
+                Sharing needs <span class="font-medium text-foreground">ngrok</span> installed on your system with an auth token configured:
+              </p>
+              <code class="inline-block rounded bg-muted px-2 py-0.5 font-mono text-xs text-foreground">
+                ngrok config add-authtoken &lt;token&gt;
+              </code>
+            </div>
+            <div class="flex shrink-0 items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                @click="openExternal('https://dashboard.ngrok.com/get-started/your-authtoken')"
+              >
+                <ExternalLink class="mr-1.5 size-3.5" /> Get auth token
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                @click="openExternal('https://ngrok.com/download')"
+              >
+                <Download class="mr-1.5 size-3.5" /> Download ngrok
+              </Button>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>zrok</CardTitle>
+          <CardDescription>
+            Open-source peer-to-peer and public tunneling platform built on OpenZiti.
+            Provides public sharing with zero open firewall ports. Quick tunnels run via
+            zrok's public proxies.
+          </CardDescription>
+        </CardHeader>
+
+        <CardContent>
+          <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div class="space-y-1 text-sm">
+              <p class="text-muted-foreground">
+                Sharing needs <span class="font-medium text-foreground">zrok</span> installed on your system and enabled with your account:
+              </p>
+              <code class="inline-block rounded bg-muted px-2 py-0.5 font-mono text-xs text-foreground">
+                zrok enable &lt;token&gt;
+              </code>
+            </div>
+            <div class="flex shrink-0 items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                @click="openExternal('https://zrok.io/docs/getting-started')"
+              >
+                <ExternalLink class="mr-1.5 size-3.5" /> Quickstart guide
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                @click="openExternal('https://github.com/openziti/zrok/releases')"
+              >
+                <Download class="mr-1.5 size-3.5" /> Download zrok
+              </Button>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
         <CardHeader>
           <CardTitle>Shared sites</CardTitle>
           <CardDescription>
@@ -516,7 +610,7 @@ onUnmounted(registerViewActions({ refresh: () => void reload() }));
         </CardHeader>
 
         <CardContent>
-          <div class="mb-4 flex items-end gap-3">
+          <div class="mb-4 flex flex-col items-stretch gap-3 sm:flex-row sm:items-end">
             <div class="min-w-0 flex-1">
               <label class="mb-1.5 block text-xs font-medium text-muted-foreground">
                 Site to share
@@ -531,8 +625,20 @@ onUnmounted(registerViewActions({ refresh: () => void reload() }));
                 :disabled="shareableSites.length === 0"
               />
             </div>
+            <div class="w-full sm:w-44">
+              <label class="mb-1.5 block text-xs font-medium text-muted-foreground">
+                Provider
+              </label>
+              <Select
+                v-model="selectedProvider"
+                :options="providerOptions"
+                aria-label="Tunnel provider"
+                class="h-9 w-full"
+              />
+            </div>
             <Button
-              :disabled="busy !== null || !shareSite || connected !== true"
+              class="h-9"
+              :disabled="busy !== null || !shareSite || connected !== true || (selectedProvider === 'cloudflare' && !installed)"
               @click="doShare"
             >
               <Spinner v-if="busy === `share:${shareSite}`" class="mr-1.5 size-3.5" />
@@ -542,6 +648,13 @@ onUnmounted(registerViewActions({ refresh: () => void reload() }));
           </div>
 
           <p
+            v-if="selectedProvider === 'cloudflare' && !installed"
+            class="mb-3 text-xs text-amber-500"
+          >
+            Cloudflare Tunnel requires cloudflared. Install it above before sharing.
+          </p>
+
+          <p
             v-if="selectedShareSite"
             class="mb-5 flex items-center gap-1.5 text-xs text-muted-foreground"
           >
@@ -549,7 +662,7 @@ onUnmounted(registerViewActions({ refresh: () => void reload() }));
             <span>
               Publishes
               <span class="font-mono text-foreground">{{ shareSite }}.test</span>
-              over {{ selectedShareSite.secure ? "HTTPS" : "HTTP" }} - anyone with the
+              over {{ selectedShareSite.secure ? "HTTPS" : "HTTP" }} via {{ selectedProvider }} - anyone with the
               link can reach it.
             </span>
           </p>
@@ -565,6 +678,7 @@ onUnmounted(registerViewActions({ refresh: () => void reload() }));
             <thead>
               <tr class="border-b text-left text-xs uppercase text-muted-foreground">
                 <th class="py-2 pr-4 font-medium">Site</th>
+                <th class="py-2 pr-4 font-medium">Provider</th>
                 <th class="py-2 pr-4 font-medium">Public URL</th>
                 <th class="py-2 pl-4 text-right font-medium">Actions</th>
               </tr>
@@ -575,6 +689,11 @@ onUnmounted(registerViewActions({ refresh: () => void reload() }));
                   {{ t.site }}
                   <Badge v-if="t.state === 'failed'" variant="outline" class="ml-1">
                     failed
+                  </Badge>
+                </td>
+                <td class="py-3 pr-4">
+                  <Badge variant="outline" class="text-xs capitalize">
+                    {{ t.provider ?? "cloudflare" }}
                   </Badge>
                 </td>
                 <td class="py-3 pr-4">

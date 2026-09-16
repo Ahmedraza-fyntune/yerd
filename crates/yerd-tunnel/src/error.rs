@@ -8,16 +8,16 @@ use yerd_supervise::ExitReason;
 /// these are all runtime failures from the async manager (the I/O edge).
 #[derive(Debug, thiserror::Error)]
 pub enum TunnelError {
-    /// The `cloudflared` binary has not been installed yet.
-    #[error("cloudflared is not installed")]
-    NotInstalled,
+    /// The tunnel binary has not been installed yet.
+    #[error("tunnel binary is not installed: {0}")]
+    NotInstalled(String),
 
-    /// Spawning the `cloudflared` process failed.
-    #[error("failed to spawn cloudflared: {0}")]
+    /// Spawning the tunnel process failed.
+    #[error("failed to spawn tunnel process: {0}")]
     Spawn(#[source] std::io::Error),
 
     /// Waiting on / signalling the child failed.
-    #[error("cloudflared process I/O failed: {0}")]
+    #[error("tunnel process I/O failed: {0}")]
     Io(#[source] std::io::Error),
 
     /// The readiness window elapsed before the tunnel came up (no URL / no edge

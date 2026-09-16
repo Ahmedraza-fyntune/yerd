@@ -15,6 +15,22 @@ pub fn parse_quick_url(chunk: &str) -> Option<String> {
     split_tokens(chunk).find_map(extract_trycloudflare)
 }
 
+/// Find the assigned ngrok public URL in a log chunk.
+///
+/// Matches `https://*.ngrok-free.app` or `https://*.ngrok.io` or `https://*.ngrok.app`.
+#[must_use]
+pub fn parse_ngrok_url(chunk: &str) -> Option<String> {
+    split_tokens(chunk).find_map(extract_ngrok)
+}
+
+/// Find the assigned zrok public URL in a log chunk.
+///
+/// Matches `https://*.share.zrok.io`.
+#[must_use]
+pub fn parse_zrok_url(chunk: &str) -> Option<String> {
+    split_tokens(chunk).find_map(extract_zrok)
+}
+
 /// Find the browser-login auth URL (the first `https://…cloudflare.com…` token).
 #[must_use]
 pub fn find_auth_url(chunk: &str) -> Option<String> {
@@ -76,6 +92,32 @@ fn extract_trycloudflare(token: &str) -> Option<String> {
     let host = url.strip_prefix("https://")?;
     let host = host.split('/').next().unwrap_or(host);
     if host.len() > ".trycloudflare.com".len() && host.ends_with(".trycloudflare.com") {
+        Some(format!("https://{host}"))
+    } else {
+        None
+    }
+}
+
+/// Return `https://<host>` when `token` holds an ngrok public URL (`*.ngrok-free.app`, `*.ngrok.io`, `*.ngrok.app`).
+fn extract_ngrok(token: &str) -> Option<String> {
+    const SUFFIXES: [&str; 3] = [".ngrok-free.app", ".ngrok.io", ".ngrok.app"];
+    let url = https_url_in(token)?;
+    let host = url.strip_prefix("https://")?;
+    let host = host.split('/').next().unwrap_or(host);
+    for suffix in &SUFFIXES {
+        if host.len() > suffix.len() && host.ends_with(suffix) {
+            return Some(format!("https://{host}"));
+        }
+    }
+    None
+}
+
+/// Return `https://<host>` when `token` holds a zrok public URL (`*.share.zrok.io`).
+fn extract_zrok(token: &str) -> Option<String> {
+    let url = https_url_in(token)?;
+    let host = url.strip_prefix("https://")?;
+    let host = host.split('/').next().unwrap_or(host);
+    if host.len() > ".share.zrok.io".len() && host.ends_with(".share.zrok.io") {
         Some(format!("https://{host}"))
     } else {
         None
@@ -164,5 +206,33 @@ mod tests {
         assert!(!is_uuid("6ff42ae2-765d-4adf-8112-31c55c1551e")); // 11 in last group
         assert!(!is_uuid("zzzzzzzz-765d-4adf-8112-31c55c1551ef")); // non-hex
         assert!(is_uuid("6ff42ae2-765d-4adf-8112-31c55c1551ef"));
+    }
+
+    #[test]
+    fn parses_ngrok_urls() {
+        let chunk_logfmt = "lvl=info msg=\"started tunnel\" obj=tunnels name=command_line addr=http://127.0.0.1:8080 url=https://abc123-xyz.ngrok-free.app";
+        assert_eq!(
+            parse_ngrok_url(chunk_logfmt).as_deref(),
+            Some("https://abc123-xyz.ngrok-free.app")
+        );
+
+        let chunk_custom = "Forwarding https://my-custom.ngrok.app -> http://localhost:8080";
+        assert_eq!(
+            parse_ngrok_url(chunk_custom).as_deref(),
+            Some("https://my-custom.ngrok.app")
+        );
+
+        assert_eq!(parse_ngrok_url("https://ngrok.com/pricing"), None);
+    }
+
+    #[test]
+    fn parses_zrok_urls() {
+        let chunk = "[   0.123]   INFO main.(*shareCommand).run: public access: https://3z910f.share.zrok.io\n";
+        assert_eq!(
+            parse_zrok_url(chunk).as_deref(),
+            Some("https://3z910f.share.zrok.io")
+        );
+
+        assert_eq!(parse_zrok_url("connecting to zrok environment..."), None);
     }
 }

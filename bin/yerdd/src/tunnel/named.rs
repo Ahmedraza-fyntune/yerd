@@ -532,6 +532,7 @@ pub async fn start(state: &DaemonState) -> Response {
     super::run_to_ready(
         state,
         NAMED_KEY,
+        yerd_tunnel::TunnelProvider::Cloudflare,
         resolved.binary,
         args,
         env,

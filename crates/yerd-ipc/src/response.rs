@@ -941,6 +941,7 @@ mod variant_name_pinning {
         pin_response(Response::Tunnels {
             tunnels: vec![crate::status::TunnelInfo {
                 site: "app".into(),
+                provider: crate::status::TunnelProvider::Cloudflare,
                 kind: crate::status::TunnelKind::Quick,
                 state: crate::status::TunnelRunState::Running,
                 url: Some("https://calm-river-1234.trycloudflare.com".into()),

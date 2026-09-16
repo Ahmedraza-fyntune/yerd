@@ -11,6 +11,8 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use yerd_core::PhpVersion;
 
+use crate::status::TunnelProvider;
+
 // IMPORTANT: per-field serde renames are forbidden in this crate. Add
 // new variants/fields additively; let rename_all handle casing. See
 // README and the verification script's grep gate.
@@ -648,13 +650,15 @@ pub enum Request {
     /// [`super::Response::JobStarted`] immediately; progress is polled via
     /// [`Self::JobStatus`]. The streaming-only sibling of the dev-tool installers.
     InstallCloudflaredStreamed,
-    /// Start a Quick Tunnel for a site, publishing it at a random
-    /// `*.trycloudflare.com` URL. Replies [`super::Response::Tunnels`] with the
-    /// live tunnel (including its URL once captured). Requires `cloudflared` to be
-    /// installed.
+    /// Start a Quick/ephemeral Tunnel for a site, publishing it at a public
+    /// provider URL. Replies [`super::Response::Tunnels`] with the
+    /// live tunnel (including its URL once captured).
     StartQuickTunnel {
         /// The site name to share.
         site: String,
+        /// The tunnel provider to use (defaults to Cloudflare if None).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        provider: Option<TunnelProvider>,
     },
     /// Stop and tear down the tunnel for a site. No-op if none is running.
     StopTunnel {
@@ -1183,7 +1187,10 @@ mod variant_name_pinning {
         });
         pin(Request::StageUpdate { channel: None });
         pin(Request::InstallCloudflaredStreamed);
-        pin(Request::StartQuickTunnel { site: "app".into() });
+        pin(Request::StartQuickTunnel {
+            site: "app".into(),
+            provider: None,
+        });
         pin(Request::StopTunnel { site: "app".into() });
         pin(Request::TunnelStatus);
         pin(Request::CloudflaredLogin);

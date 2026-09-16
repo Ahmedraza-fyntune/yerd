@@ -578,7 +578,21 @@ fn validate_domain(domain: &str) -> Result<(), ClientError> {
 fn tunnel_request(action: &TunnelAction) -> Request {
     match action {
         TunnelAction::Install => Request::InstallCloudflaredStreamed,
-        TunnelAction::Share { site } => Request::StartQuickTunnel { site: site.clone() },
+        TunnelAction::Share { site, provider } => {
+            let provider =
+                provider
+                    .as_deref()
+                    .and_then(|p| match p.to_ascii_lowercase().as_str() {
+                        "cloudflare" | "cf" => Some(yerd_ipc::TunnelProvider::Cloudflare),
+                        "ngrok" => Some(yerd_ipc::TunnelProvider::Ngrok),
+                        "zrok" => Some(yerd_ipc::TunnelProvider::Zrok),
+                        _ => None,
+                    });
+            Request::StartQuickTunnel {
+                site: site.clone(),
+                provider,
+            }
+        }
         TunnelAction::Stop { site } => Request::StopTunnel { site: site.clone() },
         TunnelAction::Status => Request::TunnelStatus,
         TunnelAction::Login => Request::CloudflaredLogin,
@@ -1439,15 +1453,21 @@ fn format_tunnels(tunnels: &[TunnelInfo], cloudflared: &CloudflaredStatus) -> St
     if tunnels.is_empty() {
         return format!("{cf}\nno active tunnels");
     }
-    let mut out = format!("{cf}\n\nSITE\tSTATE\tURL");
+    let mut out = format!("{cf}\n\nSITE\tPROVIDER\tSTATE\tURL");
     for t in tunnels {
         let state = match t.state {
             TunnelRunState::Running => "running",
             TunnelRunState::Failed => "failed",
             _ => "unknown",
         };
+        let provider = match t.provider {
+            yerd_ipc::TunnelProvider::Cloudflare => "cloudflare",
+            yerd_ipc::TunnelProvider::Ngrok => "ngrok",
+            yerd_ipc::TunnelProvider::Zrok => "zrok",
+            _ => "unknown",
+        };
         let target = t.url.as_deref().or(t.hostname.as_deref()).unwrap_or("-");
-        let _ = write!(out, "\n{}\t{}\t{}", t.site, state, target);
+        let _ = write!(out, "\n{}\t{}\t{}\t{}", t.site, provider, state, target);
     }
     out
 }
@@ -2325,6 +2345,46 @@ mod tests {
             Request::SetWebRoot {
                 name: "foo".into(),
                 path: None,
+            }
+        );
+
+        assert_eq!(
+            to_request(&Command::Tunnel {
+                action: crate::cli::TunnelAction::Share {
+                    site: "myapp".into(),
+                    provider: None,
+                }
+            })
+            .unwrap(),
+            Request::StartQuickTunnel {
+                site: "myapp".into(),
+                provider: None,
+            }
+        );
+        assert_eq!(
+            to_request(&Command::Tunnel {
+                action: crate::cli::TunnelAction::Share {
+                    site: "myapp".into(),
+                    provider: Some("ngrok".into()),
+                }
+            })
+            .unwrap(),
+            Request::StartQuickTunnel {
+                site: "myapp".into(),
+                provider: Some(yerd_ipc::TunnelProvider::Ngrok),
+            }
+        );
+        assert_eq!(
+            to_request(&Command::Tunnel {
+                action: crate::cli::TunnelAction::Share {
+                    site: "myapp".into(),
+                    provider: Some("zrok".into()),
+                }
+            })
+            .unwrap(),
+            Request::StartQuickTunnel {
+                site: "myapp".into(),
+                provider: Some(yerd_ipc::TunnelProvider::Zrok),
             }
         );
     }

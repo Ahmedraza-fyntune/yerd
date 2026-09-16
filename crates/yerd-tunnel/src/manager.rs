@@ -31,23 +31,26 @@ use yerd_supervise::supervisor::{
 use yerd_supervise::{ChildHandle, Clock, ExitReason, ProcessSpawner};
 
 use crate::error::TunnelError;
-use crate::parse::{is_named_ready, parse_quick_url};
+use crate::parse::{is_named_ready, parse_ngrok_url, parse_quick_url, parse_zrok_url};
+use crate::provider::TunnelProvider;
 use crate::TunnelKind;
 
 /// Floor between readiness checks while a tunnel is connecting.
 const READINESS_GAP: Duration = Duration::from_millis(150);
 
-/// Everything needed to spawn one supervised `cloudflared` child: the binary,
+/// Everything needed to spawn one supervised tunnel child: the provider, binary,
 /// its argument vector, the pinned environment, and the logfile its output is
 /// redirected to. Passed to [`TunnelManager::begin`].
 #[derive(Debug, Clone)]
 pub struct LaunchSpec {
-    /// Path to the `cloudflared` binary.
+    /// The tunnel provider (Cloudflare, Ngrok, Zrok).
+    pub provider: TunnelProvider,
+    /// Path to the provider binary.
     pub binary: PathBuf,
     /// Argument vector (excluding the program name).
     pub args: Vec<OsString>,
     /// The child's complete environment: the inherited environment is cleared
-    /// before these are applied, so this is the only environment `cloudflared`
+    /// before these are applied, so this is the only environment the child
     /// sees (e.g. `HOME`, `TUNNEL_ORIGIN_CERT`, and any forwarded allowlist).
     pub env: Vec<(OsString, OsString)>,
     /// Logfile the child's stdout+stderr are redirected to (and tailed for
@@ -83,13 +86,15 @@ pub enum TunnelState {
 pub struct TunnelSnapshot {
     /// Site name the tunnel publishes.
     pub site: String,
+    /// The tunnel provider (Cloudflare, Ngrok, Zrok).
+    pub provider: TunnelProvider,
     /// Quick vs Named.
     pub kind: TunnelKind,
     /// Whether the process is alive or has died.
     pub state: TunnelState,
     /// The process PID, when running.
     pub pid: Option<u32>,
-    /// The public URL (Quick tunnels) once captured.
+    /// The public URL (Quick/ephemeral tunnels) once captured.
     pub url: Option<String>,
     /// The configured public hostname (Named tunnels).
     pub hostname: Option<String>,
@@ -102,6 +107,7 @@ struct Instance<Ch: ChildHandle> {
     state_since: Instant,
     /// The event fed to the FSM on the next `advance` tick.
     pending: Event,
+    provider: TunnelProvider,
     kind: TunnelKind,
     binary: PathBuf,
     args: Vec<OsString>,
@@ -192,6 +198,7 @@ where
                 state: PoolState::Stopped,
                 state_since: now,
                 pending: Event::EnsureRequested,
+                provider: spec.provider,
                 kind,
                 binary: spec.binary,
                 args: spec.args,
@@ -306,16 +313,16 @@ where
             return Step::Continue;
         }
 
-        let Some((kind, logfile)) = self
+        let Some((provider, kind, logfile)) = self
             .instances
             .get(site)
-            .map(|i| (i.kind, i.logfile.clone()))
+            .map(|i| (i.provider, i.kind, i.logfile.clone()))
         else {
             return Step::Gone;
         };
         let text = read_file_lossy(&logfile);
-        let ready = match kind {
-            TunnelKind::Quick => match parse_quick_url(&text) {
+        let ready = match (provider, kind) {
+            (TunnelProvider::Cloudflare, TunnelKind::Quick) => match parse_quick_url(&text) {
                 Some(url) => {
                     if let Some(i) = self.instances.get_mut(site) {
                         i.url = Some(url);
@@ -324,7 +331,25 @@ where
                 }
                 None => false,
             },
-            TunnelKind::Named => is_named_ready(&text),
+            (TunnelProvider::Cloudflare, TunnelKind::Named) => is_named_ready(&text),
+            (TunnelProvider::Ngrok, _) => match parse_ngrok_url(&text) {
+                Some(url) => {
+                    if let Some(i) = self.instances.get_mut(site) {
+                        i.url = Some(url);
+                    }
+                    true
+                }
+                None => false,
+            },
+            (TunnelProvider::Zrok, _) => match parse_zrok_url(&text) {
+                Some(url) => {
+                    if let Some(i) = self.instances.get_mut(site) {
+                        i.url = Some(url);
+                    }
+                    true
+                }
+                None => false,
+            },
         };
         if ready {
             self.set_pending(site, Event::HealthCheckOk);
@@ -420,6 +445,7 @@ where
             };
             out.push(TunnelSnapshot {
                 site: site.clone(),
+                provider: inst.provider,
                 kind: inst.kind,
                 state: if running {
                     TunnelState::Running
@@ -647,6 +673,7 @@ mod tests {
             .begin(
                 "app",
                 LaunchSpec {
+                    provider: TunnelProvider::Cloudflare,
                     binary: Path::new("/usr/bin/cloudflared").to_path_buf(),
                     args: vec![],
                     env: vec![],
@@ -664,6 +691,7 @@ mod tests {
         let snaps = mgr.snapshots();
         assert_eq!(snaps.len(), 1);
         assert_eq!(snaps[0].site, "app");
+        assert_eq!(snaps[0].provider, TunnelProvider::Cloudflare);
         assert_eq!(snaps[0].kind, TunnelKind::Quick);
         assert_eq!(snaps[0].state, TunnelState::Running);
         assert_eq!(
@@ -676,6 +704,7 @@ mod tests {
             .begin(
                 "app",
                 LaunchSpec {
+                    provider: TunnelProvider::Cloudflare,
                     binary: Path::new("/usr/bin/cloudflared").to_path_buf(),
                     args: vec![],
                     env: vec![],
@@ -703,6 +732,7 @@ mod tests {
         mgr.begin(
             "blog",
             LaunchSpec {
+                provider: TunnelProvider::Cloudflare,
                 binary: Path::new("/cf").to_path_buf(),
                 args: vec![],
                 env: vec![],
@@ -730,6 +760,7 @@ mod tests {
         mgr.begin(
             "dead",
             LaunchSpec {
+                provider: TunnelProvider::Cloudflare,
                 binary: Path::new("/cf").to_path_buf(),
                 args: vec![],
                 env: vec![],
@@ -770,6 +801,7 @@ mod tests {
         mgr.begin(
             "shop",
             LaunchSpec {
+                provider: TunnelProvider::Cloudflare,
                 binary: Path::new("/cf").to_path_buf(),
                 args: vec![],
                 env: vec![],
@@ -782,8 +814,80 @@ mod tests {
         .unwrap();
         assert_eq!(drive_to_ready(&mut mgr, "shop").await, Step::Ready);
         let snaps = mgr.snapshots();
+        assert_eq!(snaps[0].provider, TunnelProvider::Cloudflare);
         assert_eq!(snaps[0].kind, TunnelKind::Named);
         assert_eq!(snaps[0].state, TunnelState::Running);
         assert_eq!(snaps[0].hostname.as_deref(), Some("shop.example.com"));
+    }
+
+    #[tokio::test]
+    async fn ngrok_tunnel_becomes_ready_when_url_parsed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let logfile = tmp.path().join("ngrok.log");
+        let killed = Arc::new(AtomicBool::new(false));
+        let spawner = FakeSpawner {
+            logfile: logfile.clone(),
+            contents: "lvl=info msg=\"started tunnel\" url=https://xyz123.ngrok-free.app\n"
+                .to_string(),
+            killed,
+        };
+        let mut mgr = TunnelManager::new(spawner, FakeClock);
+        mgr.begin(
+            "ngsite",
+            LaunchSpec {
+                provider: TunnelProvider::Ngrok,
+                binary: Path::new("/usr/bin/ngrok").to_path_buf(),
+                args: vec![],
+                env: vec![],
+                logfile,
+            },
+            TunnelKind::Quick,
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(drive_to_ready(&mut mgr, "ngsite").await, Step::Ready);
+        let snaps = mgr.snapshots();
+        assert_eq!(snaps[0].provider, TunnelProvider::Ngrok);
+        assert_eq!(snaps[0].state, TunnelState::Running);
+        assert_eq!(
+            snaps[0].url.as_deref(),
+            Some("https://xyz123.ngrok-free.app")
+        );
+    }
+
+    #[tokio::test]
+    async fn zrok_tunnel_becomes_ready_when_url_parsed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let logfile = tmp.path().join("zrok.log");
+        let killed = Arc::new(AtomicBool::new(false));
+        let spawner = FakeSpawner {
+            logfile: logfile.clone(),
+            contents: "[ 0.12 ] INFO public access: https://abc456.share.zrok.io\n".to_string(),
+            killed,
+        };
+        let mut mgr = TunnelManager::new(spawner, FakeClock);
+        mgr.begin(
+            "zrsite",
+            LaunchSpec {
+                provider: TunnelProvider::Zrok,
+                binary: Path::new("/usr/bin/zrok").to_path_buf(),
+                args: vec![],
+                env: vec![],
+                logfile,
+            },
+            TunnelKind::Quick,
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(drive_to_ready(&mut mgr, "zrsite").await, Step::Ready);
+        let snaps = mgr.snapshots();
+        assert_eq!(snaps[0].provider, TunnelProvider::Zrok);
+        assert_eq!(snaps[0].state, TunnelState::Running);
+        assert_eq!(
+            snaps[0].url.as_deref(),
+            Some("https://abc456.share.zrok.io")
+        );
     }
 }

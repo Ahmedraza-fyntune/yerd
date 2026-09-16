@@ -45,6 +45,7 @@ import type {
   TitleBarStyle,
   ToolStatus,
   TrayIconVariant,
+  TunnelProvider,
   TunnelsResponse,
   UpdateChannel,
   UpdateStatusResponse,
@@ -578,9 +579,14 @@ export async function installCloudflaredStreamed(): Promise<string> {
   return r.job_id;
 }
 
-/** Share a site via a Quick Tunnel; returns the refreshed tunnel list. */
-export async function startQuickTunnel(site: string): Promise<TunnelsResponse> {
-  return ensureOk(await call<Response>("start_quick_tunnel", { site })) as TunnelsResponse;
+/** Share a site via a Quick/ephemeral Tunnel; returns the refreshed tunnel list. */
+export async function startQuickTunnel(
+  site: string,
+  provider?: TunnelProvider
+): Promise<TunnelsResponse> {
+  return ensureOk(
+    await call<Response>("start_quick_tunnel", { site, provider })
+  ) as TunnelsResponse;
 }
 
 /** Stop a site's tunnel; returns the refreshed tunnel list. */

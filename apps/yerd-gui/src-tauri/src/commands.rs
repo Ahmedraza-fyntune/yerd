@@ -930,10 +930,13 @@ pub async fn install_cloudflared_streamed() -> Result<Response, GuiError> {
     finish(exchange(&Request::InstallCloudflaredStreamed).await?)
 }
 
-/// Publish a site at a temporary `*.trycloudflare.com` Quick Tunnel URL.
+/// Publish a site at a temporary Quick/ephemeral Tunnel URL.
 #[tauri::command]
-pub async fn start_quick_tunnel(site: String) -> Result<Response, GuiError> {
-    finish(exchange(&Request::StartQuickTunnel { site }).await?)
+pub async fn start_quick_tunnel(
+    site: String,
+    provider: Option<yerd_ipc::TunnelProvider>,
+) -> Result<Response, GuiError> {
+    finish(exchange(&Request::StartQuickTunnel { site, provider }).await?)
 }
 
 /// Tear down a site's running tunnel.

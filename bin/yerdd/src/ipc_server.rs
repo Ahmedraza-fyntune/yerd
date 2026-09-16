@@ -418,7 +418,9 @@ async fn dispatch(req: Request, state: &DaemonState) -> Response {
             crate::self_update::stage_update(channel, state, &dl, yerd_update::UPDATE_PUBLIC_KEY)
                 .await
         }
-        Request::StartQuickTunnel { site } => crate::tunnel::start_quick_tunnel(&site, state).await,
+        Request::StartQuickTunnel { site, provider } => {
+            crate::tunnel::start_quick_tunnel(&site, provider, state).await
+        }
         Request::StopTunnel { site } => crate::tunnel::stop_tunnel(&site, state).await,
         Request::TunnelStatus => crate::tunnel::tunnel_status(state).await,
         Request::CreateNamedTunnel { name } => crate::tunnel::named::create(&name, state).await,

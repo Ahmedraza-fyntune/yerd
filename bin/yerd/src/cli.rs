@@ -611,11 +611,15 @@ pub enum ServiceAction {
 pub enum TunnelAction {
     /// Download the `cloudflared` binary (required before sharing a site).
     Install,
-    /// Share a site publicly via a Quick Tunnel (a random `*.trycloudflare.com`
-    /// URL). Requires `cloudflared` to be installed.
+    /// Share a site publicly via a tunnel (random URL).
+    ///
+    /// Supports Cloudflare (default), ngrok, and zrok.
     Share {
         /// Site name (e.g. `app` or `app.test`).
         site: String,
+        /// Tunnel provider (`cloudflare`, `ngrok`, or `zrok`).
+        #[arg(long)]
+        provider: Option<String>,
     },
     /// Stop sharing a site.
     Stop {

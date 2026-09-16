@@ -18,11 +18,13 @@ pub mod error;
 pub mod manager;
 pub mod origin;
 pub mod parse;
+pub mod provider;
 
 pub use config::IngressRule;
 pub use error::TunnelError;
 pub use manager::{LaunchSpec, Step, TunnelManager, TunnelSnapshot, TunnelState};
 pub use origin::{OriginTarget, Scheme};
+pub use provider::TunnelProvider;
 
 /// Which tunnel tier a supervised `cloudflared` instance is serving.
 ///
